@@ -1,0 +1,715 @@
+// NOSXOTROS — Ecosistema Social / "ERP social" para respuesta a emergencias
+// Prisma schema = contrato de datos de toda la plataforma.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  DONOR // Donante
+  VOLUNTEER // Voluntario
+  MANAGER // Gestor de Acopio / ONG (también organiza campañas)
+  REGISTRAR // Empadronador
+  ADMIN // NOSXOTROS / gobernanza
+}
+
+enum VolunteerSkill {
+  MEDIC
+  LOGISTICS
+  DRIVER
+  COOK
+  PSYCHOLOGY
+  CONSTRUCTION
+  COMMS
+  GENERAL
+}
+
+enum EmergencyStatus {
+  ACTIVE
+  CONTAINED
+  CLOSED
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum DonationType {
+  MONEY // fondos
+  GOODS // especies
+  TIME // voluntariado (horas)
+}
+
+enum DonationStatus {
+  PROMISED // prometida
+  RECEIVED // ingresada al acopio
+  IN_TRANSIT // despachada
+  DELIVERED // entregada a beneficiarios (validada)
+  CANCELLED
+}
+
+enum PaymentMethod {
+  YAPE
+  PLIN
+  CARD
+  CASH
+  IN_KIND
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum CenterStatus {
+  OPEN
+  NEAR_FULL
+  FULL
+  CLOSED
+}
+
+enum InventoryMovementType {
+  IN // entrada
+  OUT // salida / despacho
+  ADJUST // ajuste de inventario
+}
+
+enum ShiftStatus {
+  OPEN
+  FULL
+  CANCELLED
+  DONE
+}
+
+enum AssignmentStatus {
+  ENROLLED // postulado / inscrito
+  CHECKED_IN
+  CHECKED_OUT
+  NO_SHOW
+  CANCELLED
+}
+
+enum DispatchStatus {
+  PREPARING
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum OrgType {
+  NGO
+  COMPANY
+  STARTUP // emprendimiento con lente de impacto
+  PUBLIC
+  COLLECTIVE
+}
+
+enum BeneficiaryStatus {
+  PENDING
+  VALIDATED
+  SERVED // ya recibió ayuda
+  DUPLICATE
+}
+
+enum NotificationType {
+  ALERT
+  DONATION
+  SHIFT
+  SYSTEM
+  IMPACT
+  CAMPAIGN
+}
+
+// ───────────────────── Campañas de crecimiento (grow / crowdfunding) ─────────────────────
+
+enum CampaignStatus {
+  DRAFT // borrador (solo visible para el organizador)
+  ACTIVE // recaudando
+  PAUSED // pausada por el organizador
+  FUNDED // meta alcanzada, sigue abierta
+  COMPLETED // cerrada con éxito
+  CANCELLED
+}
+
+enum CampaignCategory {
+  HEALTH // salud
+  EDUCATION // educación
+  ENVIRONMENT // medio ambiente
+  ENTREPRENEURSHIP // emprendimiento / negocio social
+  COMMUNITY // comunidad / barrio
+  EMERGENCY // emergencia
+  ANIMALS // animales
+  CULTURE // cultura y arte
+  TECHNOLOGY // tecnología
+  SPORTS // deporte
+  OTHER
+}
+
+// ───────────────────────────── Core ─────────────────────────────
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  phone         String?  @unique
+  passwordHash  String? // opcional: usuarios que entran con Google no tienen contraseña
+  googleId      String?  @unique // sub de Google OAuth (si se registró/vinculó con Google)
+  fullName      String
+  role          Role     @default(DONOR)
+  avatarUrl     String?
+  locale        String   @default("es") // es | qu
+  isActive      Boolean  @default(true)
+  emailVerified Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  volunteerProfile VolunteerProfile?
+  donations        Donation[]
+  campaigns        Campaign[]         @relation("CampaignOrganizer")
+  notifications    Notification[]
+  beneficiariesReg Beneficiary[]      @relation("RegisteredBy")
+  inventoryMoves   InventoryMovement[]
+  auditLogs        AuditLog[]
+  surveyResponses  SurveyResponse[]
+  brigadeMemberships BrigadeMember[]
+}
+
+model Organization {
+  id           String   @id @default(cuid())
+  name         String
+  type         OrgType  @default(NGO)
+  ruc          String?  @unique // identificador fiscal
+  description  String?
+  logoUrl      String?
+  verified     Boolean  @default(false) // censada / validada por NOSXOTROS
+  impactLens   Boolean  @default(false) // emprendimiento/startup con lente de impacto
+  website      String?
+  contactEmail String?
+  contactPhone String?
+  lat          Float?
+  lng          Float?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  members User[]
+  centers Center[]
+}
+
+// ───────────────────────── Voluntariado ─────────────────────────
+
+model VolunteerProfile {
+  id            String           @id @default(cuid())
+  userId        String           @unique
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills        VolunteerSkill[]
+  bio           String?
+  // disponibilidad / personalización
+  radiusKm      Int              @default(10) // "emergencias a menos de X km"
+  baseLat       Float?
+  baseLng       Float?
+  interests     String[] // ej. ["medical","logistics"]
+  // gamificación — Pasaporte de Impacto
+  totalHours    Float            @default(0)
+  impactPoints  Int              @default(0)
+  badges        String[]
+  passportCode  String           @unique @default(cuid())
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  assignments ShiftAssignment[]
+  brigadeMemberships BrigadeMember[]
+}
+
+model Shift {
+  id          String      @id @default(cuid())
+  title       String
+  description String?
+  skill       VolunteerSkill @default(GENERAL)
+  startsAt    DateTime
+  endsAt      DateTime
+  capacity    Int         @default(10)
+  status      ShiftStatus @default(OPEN)
+  lat         Float?
+  lng         Float?
+  address     String?
+
+  emergencyId String?
+  emergency   Emergency? @relation(fields: [emergencyId], references: [id])
+  centerId    String?
+  center      Center?    @relation(fields: [centerId], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments ShiftAssignment[]
+}
+
+model ShiftAssignment {
+  id          String           @id @default(cuid())
+  shiftId     String
+  shift       Shift            @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  volunteerId String
+  volunteer   VolunteerProfile @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  status      AssignmentStatus @default(ENROLLED)
+  checkInAt   DateTime?
+  checkInLat  Float?
+  checkInLng  Float?
+  checkOutAt  DateTime?
+  hours       Float            @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([shiftId, volunteerId])
+}
+
+// ─────────────────── Centros de acopio + inventario ───────────────────
+
+model Center {
+  id            String       @id @default(cuid())
+  name          String
+  address       String
+  lat           Float
+  lng           Float
+  status        CenterStatus @default(OPEN)
+  capacity      Int          @default(1000) // unidades / aforo de bodega
+  currentLoad   Int          @default(0)
+  contactPhone  String?
+  openingHours  String? // horario libre, ej. "Lun-Vie 8:00-18:00"
+  organizationId String?
+  organization  Organization? @relation(fields: [organizationId], references: [id])
+  campaignId    String?
+  campaign      Campaign?    @relation(fields: [campaignId], references: [id])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  inventory   InventoryItem[]
+  movements   InventoryMovement[]
+  shifts      Shift[]
+  dispatchesFrom Dispatch[]   @relation("DispatchFrom")
+  primaryForEmergencies Emergency[] @relation("PrimaryCenter")
+}
+
+model Category {
+  id    String          @id @default(cuid())
+  name  String          @unique // ej. Alimentos, Agua, Abrigo, Higiene, Medicinas
+  unit  String          @default("unidad")
+  icon  String?
+  items InventoryItem[]
+  needs Need[]
+}
+
+model InventoryItem {
+  id         String   @id @default(cuid())
+  centerId   String
+  center     Center   @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+  name       String
+  sku        String   @unique @default(cuid()) // código QR
+  quantity   Int      @default(0)
+  unit       String   @default("unidad")
+  expiresAt  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  movements InventoryMovement[]
+}
+
+model InventoryMovement {
+  id        String                @id @default(cuid())
+  itemId    String
+  item      InventoryItem         @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  centerId  String
+  center    Center                @relation(fields: [centerId], references: [id])
+  type      InventoryMovementType
+  quantity  Int
+  reason    String?
+  userId    String?
+  user      User?                 @relation(fields: [userId], references: [id])
+  donationId String?
+  donation  Donation?             @relation(fields: [donationId], references: [id])
+  createdAt DateTime              @default(now())
+}
+
+// ───────────────────────────── Donaciones ─────────────────────────────
+
+model Donation {
+  id          String         @id @default(cuid())
+  code        String         @unique @default(cuid()) // código público "Sigue tu donación"
+  type        DonationType
+  status      DonationStatus @default(PROMISED)
+  amount      Float? // monto en money
+  currency    String         @default("PEN")
+  description String? // para especies / tiempo
+  quantity    Int? // unidades en especie
+  anonymous   Boolean        @default(false)
+  donorName   String? // para invitados sin cuenta
+  donorEmail  String?
+  donorPhone  String? // teléfono (obligatorio en voluntariado / lookup por teléfono)
+
+  donorId       String?
+  donor         User?         @relation(fields: [donorId], references: [id])
+  emergencyId   String?
+  emergency     Emergency?    @relation(fields: [emergencyId], references: [id])
+  campaignId    String?
+  campaign      Campaign?     @relation(fields: [campaignId], references: [id])
+  categoryId    String?
+  centerId      String? // centro destino preferido
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  payment    Payment?
+  events     TraceEvent[]
+  movements  InventoryMovement[]
+  dispatchItems DispatchItem[]
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  donationId    String        @unique
+  donation      Donation      @relation(fields: [donationId], references: [id], onDelete: Cascade)
+  method        PaymentMethod
+  status        PaymentStatus @default(PENDING)
+  amount        Float
+  currency      String        @default("PEN")
+  reference     String? // referencia pasarela (Yape/Plin/tarjeta)
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+// Trazabilidad pública: línea de tiempo de cada donación
+model TraceEvent {
+  id         String   @id @default(cuid())
+  donationId String
+  donation   Donation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+  status     DonationStatus
+  title      String
+  note       String?
+  lat        Float?
+  lng        Float?
+  photoUrl   String?
+  createdAt  DateTime @default(now())
+}
+
+// ───────────────────── Campañas de crecimiento (grow) ─────────────────────
+// Cualquier usuario puede convertirse en ORGANIZADOR y lanzar una campaña.
+// Los donantes la financian reutilizando el motor de donaciones + trazabilidad.
+
+model Campaign {
+  id           String           @id @default(cuid())
+  slug         String           @unique // URL pública amigable
+  title        String
+  summary      String // pitch corto (gancho)
+  story        String // descripción larga / narrativa
+  category     CampaignCategory @default(OTHER)
+  status       CampaignStatus   @default(ACTIVE)
+  coverPhoto   String?
+  goalAmount   Float? // meta de recaudación (opcional)
+  raisedAmount Float            @default(0) // recaudado (suma de aportes)
+  currency     String           @default("PEN")
+  backersCount Int              @default(0) // número de donantes
+  // Voluntarios que busca la campaña (habilidades). Vacío = no busca voluntarios.
+  volunteerSkills VolunteerSkill[] @default([])
+  deadline     DateTime? // fecha límite opcional
+  lat          Float?
+  lng          Float?
+  district     String?
+  featured     Boolean          @default(false) // destacada por gobernanza
+
+  // Datos de pago que el organizador publica para donantes (Yape / cuenta)
+  yapeNumber    String?
+  yapePhone     String?
+  bankName      String?
+  bankAccount   String?
+  accountHolder String?
+  qrImageUrl    String? // URL de imagen del QR de pago (Yape/Plin)
+
+  organizerId String
+  organizer   User   @relation("CampaignOrganizer", fields: [organizerId], references: [id])
+
+  // Emergencia de origen (si la campaña se generó a partir de una emergencia)
+  emergencyId String?
+  emergency   Emergency? @relation("EmergencyCampaigns", fields: [emergencyId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  donations Donation[]
+  updates   CampaignUpdate[]
+  zones     Zone[]
+  brigades  Brigade[]
+  centers   Center[]
+
+  @@index([status, category])
+  @@index([organizerId])
+}
+
+// Actualizaciones que el organizador publica para sus donantes
+model CampaignUpdate {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  title      String
+  body       String
+  photoUrl   String?
+  createdAt  DateTime @default(now())
+}
+
+// ───────────────────── Emergencias / mapa de calor ─────────────────────
+
+model Emergency {
+  id          String          @id @default(cuid())
+  title       String
+  description String
+  status      EmergencyStatus @default(ACTIVE)
+  severity    Severity        @default(MEDIUM)
+  lat         Float
+  lng         Float
+  address     String?
+  district    String? // distrito de Arequipa
+  coverPhoto  String?
+  startedAt   DateTime        @default(now())
+  closedAt    DateTime?
+  primaryCenterId String?
+  primaryCenter   Center?     @relation("PrimaryCenter", fields: [primaryCenterId], references: [id])
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  donations   Donation[]
+  shifts      Shift[]
+  needs       Need[]
+  beneficiaries Beneficiary[]
+  dispatches  Dispatch[]
+  reports     EmergencyReport[]
+  zones       Zone[]
+  campaigns   Campaign[]        @relation("EmergencyCampaigns")
+}
+
+enum EmergencyReportStatus {
+  PENDING
+  REVIEWED
+  CONVERTED
+  REJECTED
+}
+
+model EmergencyReport {
+  id            String                @id @default(cuid())
+  code          String                @unique @default(cuid())
+  title         String
+  description   String
+  severity      Severity              @default(MEDIUM)
+  lat           Float?
+  lng           Float?
+  address       String?
+  district      String?
+  photoUrl      String?
+  reporterName  String?
+  reporterPhone String?
+  anonymous     Boolean               @default(true)
+  status        EmergencyReportStatus @default(PENDING)
+  reviewNote    String?
+  emergencyId   String?
+  emergency     Emergency?            @relation(fields: [emergencyId], references: [id])
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  reviewedAt    DateTime?
+}
+
+// Necesidades declaradas: "Faltan 200 frazadas, no traiga botellas de agua"
+model Need {
+  id          String     @id @default(cuid())
+  emergencyId String?
+  emergency   Emergency? @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+  zoneId      String?
+  zone        Zone?      @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  categoryId  String?
+  category    Category?  @relation(fields: [categoryId], references: [id])
+  title       String
+  targetQty   Int        @default(0)
+  fulfilledQty Int       @default(0)
+  unit        String     @default("unidad")
+  priority    Severity   @default(MEDIUM)
+  isBlocked   Boolean    @default(false) // "no traer X"
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+// ───────────────── Operaciones de campaña: zonas + brigadas ─────────────────
+// El organizador arma su campaña → zonas (con nivel, mapa compartible, necesidades)
+// → brigadas/equipos (punto de encuentro, teléfono, miembros voluntarios).
+
+model Zone {
+  id          String     @id @default(cuid())
+  campaignId  String
+  campaign    Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  emergencyId String?
+  emergency   Emergency? @relation(fields: [emergencyId], references: [id])
+  name        String
+  mapUrl      String? // link Google/OSM compartible (botón "compartir")
+  reference   String? // referencia / hito ("frente al mercado central")
+  description String?
+  severity    Severity   @default(MEDIUM) // nivel de emergencia de la zona
+  lat         Float?
+  lng         Float?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  needs    Need[]
+  brigades Brigade[]
+
+  @@index([campaignId])
+}
+
+model Brigade {
+  id                 String   @id @default(cuid())
+  campaignId         String
+  campaign           Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  zoneId             String?
+  zone               Zone?    @relation(fields: [zoneId], references: [id])
+  name               String
+  meetingPoint       String?
+  meetingPointMapUrl String?
+  contactPhone       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  members BrigadeMember[]
+
+  @@index([campaignId])
+  @@index([zoneId])
+}
+
+model BrigadeMember {
+  id          String            @id @default(cuid())
+  brigadeId   String
+  brigade     Brigade           @relation(fields: [brigadeId], references: [id], onDelete: Cascade)
+  volunteerId String?
+  volunteer   VolunteerProfile? @relation(fields: [volunteerId], references: [id])
+  userId      String?
+  user        User?             @relation(fields: [userId], references: [id])
+  role        String? // ej. "líder", "conductor"
+  createdAt   DateTime          @default(now())
+
+  @@unique([brigadeId, volunteerId])
+  @@index([brigadeId])
+}
+
+// ───────────────────── Censo de beneficiarios ─────────────────────
+
+model Beneficiary {
+  id          String            @id @default(cuid())
+  // validación con DNI o código asignado, anti-duplicidad
+  docType     String            @default("DNI")
+  docNumber   String            @unique
+  fullName    String
+  phone       String?
+  householdSize Int             @default(1)
+  lat         Float?
+  lng         Float?
+  address     String?
+  district    String?
+  notes       String?
+  status      BeneficiaryStatus @default(PENDING)
+  needs       String[] // necesidades declaradas en campo
+
+  emergencyId String?
+  emergency   Emergency? @relation(fields: [emergencyId], references: [id])
+  registeredById String?
+  registeredBy   User?   @relation("RegisteredBy", fields: [registeredById], references: [id])
+
+  // soporte offline
+  clientId    String?  @unique // id generado en el dispositivo para dedupe de sync
+  syncedAt    DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deliveries  DispatchItem[]
+}
+
+// ───────────────────── Despacho / entrega ─────────────────────
+
+model Dispatch {
+  id          String         @id @default(cuid())
+  code        String         @unique @default(cuid())
+  status      DispatchStatus @default(PREPARING)
+  fromCenterId String
+  fromCenter   Center        @relation("DispatchFrom", fields: [fromCenterId], references: [id])
+  emergencyId String?
+  emergency   Emergency?     @relation(fields: [emergencyId], references: [id])
+  destLat     Float?
+  destLng     Float?
+  destAddress String?
+  driverName  String?
+  departedAt  DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  items DispatchItem[]
+}
+
+model DispatchItem {
+  id           String     @id @default(cuid())
+  dispatchId   String
+  dispatch     Dispatch   @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+  description  String
+  quantity     Int        @default(1)
+  donationId   String?
+  donation     Donation?  @relation(fields: [donationId], references: [id])
+  beneficiaryId String?
+  beneficiary  Beneficiary? @relation(fields: [beneficiaryId], references: [id])
+  delivered    Boolean    @default(false)
+}
+
+// ───────────────────── Notificaciones / encuestas / auditoría ─────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType @default(SYSTEM)
+  title     String
+  body      String
+  link      String?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+}
+
+// micro-encuestas in-app + NPS
+model SurveyResponse {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  kind      String   @default("ease") // ease | nps
+  score     Int // 1-5 (ease) o 0-10 (nps)
+  context   String? // ej. "shift:checkout", "donation:done"
+  comment   String?
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+}
