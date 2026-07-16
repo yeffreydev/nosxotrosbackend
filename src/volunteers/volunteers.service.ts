@@ -1,8 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import { VolunteerProfile } from '@prisma/client';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import { Prisma, Role, VolunteerProfile } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { UpdateVolunteerDto } from './dto/update-volunteer.dto';
+import { CreateVolunteerDto } from './dto/create-volunteer.dto';
+import { CreateScheduleDto } from './dto/create-schedule.dto';
 
 @Injectable()
 export class VolunteersService {
@@ -64,6 +71,84 @@ export class VolunteersService {
 
     const { brigadeMemberships: _omit, ...rest } = full;
     return { ...rest, brigades };
+  }
+
+  // ───────── Gestión por el gestor (nivel de sistema) ─────────
+
+  /** Alta de voluntario sin cuenta: crea User stub (VOLUNTEER) + perfil. */
+  async createByManager(dto: CreateVolunteerDto, managerId: string) {
+    const email = dto.email?.trim() || `vol-${randomUUID()}@nosxotros.local`;
+    try {
+      const user = await this.prisma.user.create({
+        data: {
+          email,
+          fullName: dto.fullName,
+          phone: dto.phone?.trim() || undefined,
+          role: Role.VOLUNTEER,
+          volunteerProfile: {
+            create: {
+              availability: dto.availability?.trim() || undefined,
+              skills: dto.skills ?? [],
+            },
+          },
+        },
+        include: { volunteerProfile: true },
+      });
+      await this.audit.log(
+        managerId,
+        'create',
+        'VolunteerProfile',
+        user.volunteerProfile?.id ?? user.id,
+      );
+      return user;
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException('Ya existe un usuario con ese correo o teléfono');
+      }
+      throw e;
+    }
+  }
+
+  /** Lista de voluntarios del sistema (para el gestor). */
+  listAll(q?: string) {
+    return this.prisma.volunteerProfile.findMany({
+      where: q
+        ? { user: { fullName: { contains: q, mode: 'insensitive' } } }
+        : undefined,
+      include: {
+        user: {
+          select: { id: true, fullName: true, email: true, phone: true },
+        },
+        _count: { select: { schedules: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async addSchedule(volunteerId: string, dto: CreateScheduleDto, userId: string) {
+    const profile = await this.prisma.volunteerProfile.findUnique({
+      where: { id: volunteerId },
+    });
+    if (!profile) throw new NotFoundException('Voluntario no encontrado');
+    const schedule = await this.prisma.volunteerSchedule.create({
+      data: {
+        volunteerId,
+        campaignId: dto.campaignId,
+        date: dto.date ? new Date(dto.date) : undefined,
+        startTime: dto.startTime,
+        endTime: dto.endTime,
+        note: dto.note,
+      },
+    });
+    await this.audit.log(userId, 'create', 'VolunteerSchedule', schedule.id);
+    return schedule;
+  }
+
+  listSchedules(volunteerId: string) {
+    return this.prisma.volunteerSchedule.findMany({
+      where: { volunteerId },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    });
   }
 
   async updateMe(userId: string, dto: UpdateVolunteerDto) {

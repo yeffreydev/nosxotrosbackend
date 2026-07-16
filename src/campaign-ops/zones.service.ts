@@ -19,6 +19,16 @@ const ZONE_INCLUDE = {
       },
     },
   },
+  beneficiaries: {
+    select: { id: true, fullName: true, status: true },
+  },
+  dispatches: {
+    include: {
+      items: {
+        include: { beneficiary: { select: { id: true, fullName: true } } },
+      },
+    },
+  },
 } as const;
 
 @Injectable()
@@ -64,7 +74,7 @@ export class ZonesService {
   }
 
   async create(campaignId: string, dto: CreateZoneDto, user: AuthUser) {
-    await this.campaigns.assertOwner(campaignId, user);
+    await this.campaigns.assertCanManage(campaignId, user);
     const zone = await this.prisma.zone.create({
       data: {
         campaignId,
@@ -136,7 +146,7 @@ export class ZonesService {
   private async loadOwned(id: string, user: AuthUser) {
     const zone = await this.prisma.zone.findUnique({ where: { id } });
     if (!zone) throw new NotFoundException('Zona no encontrada');
-    await this.campaigns.assertOwner(zone.campaignId, user);
+    await this.campaigns.assertCanManage(zone.campaignId, user);
     return zone;
   }
 }

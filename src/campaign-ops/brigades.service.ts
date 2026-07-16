@@ -41,7 +41,7 @@ export class BrigadesService {
   }
 
   async create(campaignId: string, dto: CreateBrigadeDto, user: AuthUser) {
-    await this.campaigns.assertOwner(campaignId, user);
+    await this.campaigns.assertCanManage(campaignId, user);
     const brigade = await this.prisma.brigade.create({
       data: {
         campaignId,
@@ -90,12 +90,38 @@ export class BrigadesService {
   }
 
   async addMember(brigadeId: string, dto: AddBrigadeMemberDto, user: AuthUser) {
-    await this.loadOwned(brigadeId, user);
+    const brigade = await this.loadOwned(brigadeId, user);
     if (!dto.volunteerId && !dto.userId) {
       throw new BadRequestException('Indica volunteerId o userId');
     }
     if (dto.volunteerId && dto.userId) {
       throw new BadRequestException('Indica solo volunteerId o userId, no ambos');
+    }
+    // Solo se puede sumar a la brigada gente inscrita como voluntaria en la campaña.
+    if (dto.volunteerId) {
+      const enrolled = await this.prisma.campaignVolunteer.findUnique({
+        where: {
+          campaignId_volunteerId: {
+            campaignId: brigade.campaignId,
+            volunteerId: dto.volunteerId,
+          },
+        },
+      });
+      if (!enrolled) {
+        throw new BadRequestException(
+          'El voluntario no está inscrito en esta campaña',
+        );
+      }
+      // Un voluntario pertenece a una sola brigada dentro de la campaña.
+      const otherBrigade = await this.prisma.brigadeMember.findFirst({
+        where: {
+          volunteerId: dto.volunteerId,
+          brigade: { campaignId: brigade.campaignId },
+        },
+      });
+      if (otherBrigade) {
+        throw new ConflictException('El voluntario ya pertenece a una brigada');
+      }
     }
     try {
       const member = await this.prisma.brigadeMember.create({
@@ -143,7 +169,7 @@ export class BrigadesService {
   private async loadOwned(id: string, user: AuthUser) {
     const brigade = await this.prisma.brigade.findUnique({ where: { id } });
     if (!brigade) throw new NotFoundException('Brigada no encontrada');
-    await this.campaigns.assertOwner(brigade.campaignId, user);
+    await this.campaigns.assertCanManage(brigade.campaignId, user);
     return brigade;
   }
 }

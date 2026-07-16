@@ -61,5 +61,17 @@ export class CreateBeneficiaryDto {
 
   @IsOptional()
   @IsString()
+  campaignId?: string;
+
+  @IsOptional()
+  @IsString()
+  zoneId?: string;
+
+  @IsOptional()
+  @IsString()
+  photoUrl?: string;
+
+  @IsOptional()
+  @IsString()
   clientId?: string;
 }

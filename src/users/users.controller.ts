@@ -1,8 +1,13 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { UsersService } from './users.service';
+import { CreateUserDto } from './dto/create-user.dto';
 import { Roles } from '../common/decorators/roles.decorator';
+import {
+  AuthUser,
+  CurrentUser,
+} from '../common/decorators/current-user.decorator';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -14,6 +19,13 @@ export class UsersController {
   @Get()
   findAll(@Query('role') role?: Role) {
     return this.usersService.findAll(role);
+  }
+
+  // Un gestor (u ADMIN) puede crear usuarios con rol para sumarlos al sistema.
+  @Roles(Role.MANAGER, Role.ADMIN)
+  @Post()
+  create(@Body() dto: CreateUserDto, @CurrentUser() user: AuthUser) {
+    return this.usersService.create(dto, user);
   }
 
   @Roles(Role.ADMIN)

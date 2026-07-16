@@ -44,5 +44,9 @@ export class CreateEmergencyDto {
 
   @IsOptional()
   @IsString()
+  mapUrl?: string;
+
+  @IsOptional()
+  @IsString()
   primaryCenterId?: string;
 }

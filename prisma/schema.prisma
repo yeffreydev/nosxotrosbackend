@@ -186,6 +186,7 @@ model User {
   auditLogs        AuditLog[]
   surveyResponses  SurveyResponse[]
   brigadeMemberships BrigadeMember[]
+  campaignCollaborations CampaignCollaborator[] @relation("UserCollaborations")
 }
 
 model Organization {
@@ -222,6 +223,7 @@ model VolunteerProfile {
   baseLat       Float?
   baseLng       Float?
   interests     String[] // ej. ["medical","logistics"]
+  availability  String? // horarios disponibles declarados (texto libre)
   // gamificación — Pasaporte de Impacto
   totalHours    Float            @default(0)
   impactPoints  Int              @default(0)
@@ -232,6 +234,40 @@ model VolunteerProfile {
 
   assignments ShiftAssignment[]
   brigadeMemberships BrigadeMember[]
+  campaignEnrollments CampaignVolunteer[]
+  schedules   VolunteerSchedule[]
+}
+
+// Registro de horario de trabajo de un voluntario (entrada/salida).
+model VolunteerSchedule {
+  id          String           @id @default(cuid())
+  volunteerId String
+  volunteer   VolunteerProfile @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    Campaign?        @relation(fields: [campaignId], references: [id])
+  date        DateTime?
+  startTime   String // "08:00"
+  endTime     String // "13:00"
+  note        String?
+  createdAt   DateTime         @default(now())
+
+  @@index([volunteerId])
+}
+
+// Inscripción de un voluntario a una campaña. El organizador solo puede sumar a
+// una brigada a voluntarios inscritos en su campaña.
+model CampaignVolunteer {
+  id          String           @id @default(cuid())
+  campaignId  String
+  campaign    Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  volunteerId String
+  volunteer   VolunteerProfile @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  skills      VolunteerSkill[] @default([]) // habilidades que ofrece en ESTA campaña
+  note        String? // mensaje / disponibilidad declarada
+  createdAt   DateTime         @default(now())
+
+  @@unique([campaignId, volunteerId])
+  @@index([campaignId])
 }
 
 model Shift {
@@ -289,6 +325,7 @@ model Center {
   currentLoad   Int          @default(0)
   contactPhone  String?
   openingHours  String? // horario libre, ej. "Lun-Vie 8:00-18:00"
+  mapUrl        String? // enlace externo del mapa (Google Maps / Waze) para abrir la ruta
   organizationId String?
   organization  Organization? @relation(fields: [organizationId], references: [id])
   campaignId    String?
@@ -455,9 +492,27 @@ model Campaign {
   zones     Zone[]
   brigades  Brigade[]
   centers   Center[]
+  beneficiaries Beneficiary[]
+  volunteers    CampaignVolunteer[]
+  volunteerSchedules VolunteerSchedule[]
+  collaborators CampaignCollaborator[]
 
   @@index([status, category])
   @@index([organizerId])
+}
+
+// Colaboradores de una campaña: usuarios que el organizador suma para operar la
+// campaña (todo menos Ajustes). Permisos concedidos vía esta tabla.
+model CampaignCollaborator {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation("UserCollaborations", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([campaignId, userId])
+  @@index([userId])
 }
 
 // Actualizaciones que el organizador publica para sus donantes
@@ -484,6 +539,7 @@ model Emergency {
   address     String?
   district    String? // distrito de Arequipa
   coverPhoto  String?
+  mapUrl      String? // link Google/OSM compartible de la emergencia
   startedAt   DateTime        @default(now())
   closedAt    DateTime?
   primaryCenterId String?
@@ -572,6 +628,8 @@ model Zone {
 
   needs    Need[]
   brigades Brigade[]
+  beneficiaries Beneficiary[]
+  dispatches    Dispatch[]
 
   @@index([campaignId])
 }
@@ -625,11 +683,17 @@ model Beneficiary {
   address     String?
   district    String?
   notes       String?
+  photoUrl    String? // foto tomada en el empadronamiento
   status      BeneficiaryStatus @default(PENDING)
   needs       String[] // necesidades declaradas en campo
 
+  // Beneficiario puede registrarse por emergencia y/o campaña (ambos opcionales).
   emergencyId String?
   emergency   Emergency? @relation(fields: [emergencyId], references: [id])
+  campaignId  String?
+  campaign    Campaign?  @relation(fields: [campaignId], references: [id])
+  zoneId      String?
+  zone        Zone?      @relation(fields: [zoneId], references: [id])
   registeredById String?
   registeredBy   User?   @relation("RegisteredBy", fields: [registeredById], references: [id])
 
@@ -652,6 +716,8 @@ model Dispatch {
   fromCenter   Center        @relation("DispatchFrom", fields: [fromCenterId], references: [id])
   emergencyId String?
   emergency   Emergency?     @relation(fields: [emergencyId], references: [id])
+  zoneId      String?
+  zone        Zone?          @relation(fields: [zoneId], references: [id])
   destLat     Float?
   destLng     Float?
   destAddress String?

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -14,6 +15,7 @@ import { CreateBeneficiaryDto } from './dto/create-beneficiary.dto';
 import { SyncBeneficiariesDto } from './dto/sync-beneficiaries.dto';
 import { QueryBeneficiariesDto } from './dto/query-beneficiaries.dto';
 import { UpdateBeneficiaryStatusDto } from './dto/update-status.dto';
+import { UpdateBeneficiaryDto } from './dto/update-beneficiary.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import {
   CurrentUser,
@@ -42,6 +44,22 @@ export class BeneficiariesController {
   @Get()
   findAll(@Query() query: QueryBeneficiariesDto) {
     return this.beneficiariesService.findAll(query);
+  }
+
+  @Roles(Role.REGISTRAR, Role.MANAGER)
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateBeneficiaryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.beneficiariesService.update(id, dto, user.id);
+  }
+
+  @Roles(Role.MANAGER, Role.ADMIN)
+  @Delete(':id')
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.beneficiariesService.remove(id, user.id);
   }
 
   @Roles(Role.REGISTRAR, Role.MANAGER)

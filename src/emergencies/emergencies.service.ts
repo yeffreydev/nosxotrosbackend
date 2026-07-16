@@ -187,6 +187,8 @@ export class EmergenciesService {
         address: dto.address,
         district: dto.district,
         coverPhoto: dto.coverPhoto,
+        mapUrl: dto.mapUrl,
+        primaryCenterId: dto.primaryCenterId,
       },
     });
     await this.audit.log(userId, 'create', 'Emergency', emergency.id);

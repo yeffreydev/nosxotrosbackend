@@ -7,6 +7,10 @@ export class QueryBeneficiariesDto {
   emergencyId?: string;
 
   @IsOptional()
+  @IsString()
+  campaignId?: string;
+
+  @IsOptional()
   @IsEnum(BeneficiaryStatus)
   status?: BeneficiaryStatus;
 

@@ -14,6 +14,7 @@ import { CreateCenterDto } from './dto/create-center.dto';
 import { UpdateCenterDto } from './dto/update-center.dto';
 import { QueryCentersDto } from './dto/query-centers.dto';
 import { CreateItemDto } from './dto/create-item.dto';
+import { DispatchItemDto } from './dto/dispatch-item.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import {
@@ -71,5 +72,16 @@ export class CentersController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.centersService.createItem(id, dto, user.id);
+  }
+
+  @ApiBearerAuth()
+  @Roles(Role.MANAGER, Role.REGISTRAR)
+  @Post(':id/dispatch')
+  dispatchItem(
+    @Param('id') id: string,
+    @Body() dto: DispatchItemDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.centersService.dispatchItem(id, dto, user.id);
   }
 }

@@ -4,6 +4,8 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUrl,
+  MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
@@ -45,6 +47,13 @@ export class CreateCenterDto {
   @IsOptional()
   @IsString()
   openingHours?: string;
+
+  // Enlace del mapa (Google Maps, Waze, OSM…). Se guarda tal cual para que el
+  // donante abra la ruta en su app; lat/lng siguen siendo la fuente del mapa propio.
+  @IsOptional()
+  @IsUrl({ require_protocol: true })
+  @MaxLength(500)
+  mapUrl?: string;
 
   @IsOptional()
   @IsString()

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -14,6 +15,7 @@ import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { QueryCampaignsDto } from './dto/query-campaigns.dto';
 import { CreateCampaignUpdateDto } from './dto/create-update.dto';
+import { AddCollaboratorDto } from './dto/add-collaborator.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import {
@@ -71,5 +73,33 @@ export class CampaignsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.campaignsService.addUpdate(id, dto, user);
+  }
+
+  // ───────── colaboradores ─────────
+
+  @ApiBearerAuth()
+  @Get(':id/collaborators')
+  listCollaborators(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.campaignsService.listCollaborators(id, user);
+  }
+
+  @ApiBearerAuth()
+  @Post(':id/collaborators')
+  addCollaborator(
+    @Param('id') id: string,
+    @Body() dto: AddCollaboratorDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.campaignsService.addCollaborator(id, dto, user);
+  }
+
+  @ApiBearerAuth()
+  @Delete(':id/collaborators/:userId')
+  removeCollaborator(
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.campaignsService.removeCollaborator(id, userId, user);
   }
 }

@@ -1,8 +1,10 @@
-import { Body, Controller, Get, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { VolunteersService } from './volunteers.service';
 import { UpdateVolunteerDto } from './dto/update-volunteer.dto';
+import { CreateVolunteerDto } from './dto/create-volunteer.dto';
+import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import {
   CurrentUser,
@@ -31,5 +33,35 @@ export class VolunteersController {
   @Get('me/passport')
   getPassport(@CurrentUser() user: AuthUser) {
     return this.volunteersService.getPassport(user.id);
+  }
+
+  // ───────── Gestión por el gestor ─────────
+
+  @Roles(Role.MANAGER, Role.ADMIN)
+  @Get()
+  list(@Query('q') q?: string) {
+    return this.volunteersService.listAll(q);
+  }
+
+  @Roles(Role.MANAGER, Role.ADMIN)
+  @Post()
+  create(@Body() dto: CreateVolunteerDto, @CurrentUser() user: AuthUser) {
+    return this.volunteersService.createByManager(dto, user.id);
+  }
+
+  @Roles(Role.MANAGER, Role.ADMIN)
+  @Get(':id/schedule')
+  listSchedules(@Param('id') id: string) {
+    return this.volunteersService.listSchedules(id);
+  }
+
+  @Roles(Role.MANAGER, Role.ADMIN)
+  @Post(':id/schedule')
+  addSchedule(
+    @Param('id') id: string,
+    @Body() dto: CreateScheduleDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.volunteersService.addSchedule(id, dto, user.id);
   }
 }

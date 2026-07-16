@@ -21,6 +21,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { SuperadminModule } from './superadmin/superadmin.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SurveysModule } from './surveys/surveys.module';
+import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { SurveysModule } from './surveys/surveys.module';
     SuperadminModule,
     NotificationsModule,
     SurveysModule,
+    UploadsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

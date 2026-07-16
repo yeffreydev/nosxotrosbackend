@@ -1,12 +1,21 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { UPLOAD_DIR, UPLOAD_PREFIX } from './uploads/uploads.constants';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   app.setGlobalPrefix('api');
+
+  // Imágenes subidas: se sirven fuera del prefijo /api → GET /uploads/<archivo>.
+  app.useStaticAssets(UPLOAD_DIR, {
+    prefix: `${UPLOAD_PREFIX}/`,
+    maxAge: '7d',
+    index: false,
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

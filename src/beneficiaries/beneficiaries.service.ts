@@ -10,6 +10,7 @@ import { CreateBeneficiaryDto } from './dto/create-beneficiary.dto';
 import { SyncBeneficiariesDto } from './dto/sync-beneficiaries.dto';
 import { QueryBeneficiariesDto } from './dto/query-beneficiaries.dto';
 import { UpdateBeneficiaryStatusDto } from './dto/update-status.dto';
+import { UpdateBeneficiaryDto } from './dto/update-beneficiary.dto';
 
 @Injectable()
 export class BeneficiariesService {
@@ -42,7 +43,10 @@ export class BeneficiariesService {
         district: dto.district,
         notes: dto.notes,
         needs: dto.needs ?? [],
+        photoUrl: dto.photoUrl,
         emergencyId: dto.emergencyId,
+        campaignId: dto.campaignId,
+        zoneId: dto.zoneId,
         clientId: dto.clientId,
         registeredById: userId,
         status: BeneficiaryStatus.VALIDATED,
@@ -104,6 +108,7 @@ export class BeneficiariesService {
             notes: record.notes,
             needs: record.needs ?? [],
             emergencyId: record.emergencyId,
+            campaignId: record.campaignId,
             clientId: record.clientId,
             registeredById: userId,
             status: BeneficiaryStatus.VALIDATED,
@@ -134,6 +139,7 @@ export class BeneficiariesService {
     return this.prisma.beneficiary.findMany({
       where: {
         ...(query.emergencyId ? { emergencyId: query.emergencyId } : {}),
+        ...(query.campaignId ? { campaignId: query.campaignId } : {}),
         ...(query.status ? { status: query.status } : {}),
         ...(query.q
           ? {
@@ -146,6 +152,57 @@ export class BeneficiariesService {
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async update(id: string, dto: UpdateBeneficiaryDto, userId: string) {
+    const existing = await this.prisma.beneficiary.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Beneficiario no encontrado');
+
+    // El DNI es único: si cambia, no puede chocar con otro beneficiario.
+    if (dto.docNumber && dto.docNumber !== existing.docNumber) {
+      const dupe = await this.prisma.beneficiary.findUnique({
+        where: { docNumber: dto.docNumber },
+      });
+      if (dupe) {
+        throw new ConflictException('Ya existe otro beneficiario con ese documento');
+      }
+    }
+
+    const beneficiary = await this.prisma.beneficiary.update({
+      where: { id },
+      data: {
+        ...(dto.docType !== undefined ? { docType: dto.docType } : {}),
+        ...(dto.docNumber !== undefined ? { docNumber: dto.docNumber } : {}),
+        ...(dto.fullName !== undefined ? { fullName: dto.fullName } : {}),
+        ...(dto.householdSize !== undefined
+          ? { householdSize: dto.householdSize }
+          : {}),
+        ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
+        ...(dto.lat !== undefined ? { lat: dto.lat } : {}),
+        ...(dto.lng !== undefined ? { lng: dto.lng } : {}),
+        ...(dto.address !== undefined ? { address: dto.address } : {}),
+        ...(dto.district !== undefined ? { district: dto.district } : {}),
+        ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
+        ...(dto.needs !== undefined ? { needs: dto.needs } : {}),
+        ...(dto.photoUrl !== undefined ? { photoUrl: dto.photoUrl } : {}),
+        ...(dto.zoneId !== undefined ? { zoneId: dto.zoneId } : {}),
+        ...(dto.status !== undefined ? { status: dto.status } : {}),
+      },
+    });
+    await this.audit.log(userId, 'update', 'Beneficiary', id, {
+      docNumber: beneficiary.docNumber,
+    });
+    return beneficiary;
+  }
+
+  async remove(id: string, userId: string) {
+    const existing = await this.prisma.beneficiary.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Beneficiario no encontrado');
+    await this.prisma.beneficiary.delete({ where: { id } });
+    await this.audit.log(userId, 'delete', 'Beneficiary', id, {
+      docNumber: existing.docNumber,
+    });
+    return { deleted: true };
   }
 
   async updateStatus(
