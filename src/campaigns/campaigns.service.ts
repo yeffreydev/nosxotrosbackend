@@ -6,7 +6,6 @@ import {
 import { CampaignStatus, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
-import { WebRevalidateService } from '../common/web-revalidate.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
@@ -18,7 +17,6 @@ export class CampaignsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly web: WebRevalidateService,
   ) {}
 
   // ───────── helpers ─────────
@@ -88,7 +86,6 @@ export class CampaignsService {
       goalAmount: campaign.goalAmount,
     });
 
-    this.web.revalidateCampaign(slug);
     return this.shape(campaign);
   }
 
@@ -288,7 +285,6 @@ export class CampaignsService {
 
     const updated = await this.prisma.campaign.update({ where: { id }, data });
     await this.audit.log(user.id, 'update', 'Campaign', id, { ...dto });
-    this.web.revalidateCampaign(updated.slug);
     return this.shape(updated);
   }
 
@@ -308,7 +304,6 @@ export class CampaignsService {
       campaignId: id,
     });
     // El avance sale en la página pública de la campaña: hay que refrescarla.
-    this.web.revalidateCampaign(campaign.slug);
     return update;
   }
 
