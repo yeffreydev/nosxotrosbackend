@@ -256,12 +256,28 @@ model VolunteerSchedule {
 
 // Inscripción de un voluntario a una campaña. El organizador solo puede sumar a
 // una brigada a voluntarios inscritos en su campaña.
+//
+// Hay dos formas de estar inscrito:
+//   1. Con cuenta: `volunteerId` apunta al VolunteerProfile. Es el único caso que
+//      puede entrar a una brigada (BrigadeMember exige volunteerId).
+//   2. Invitado: voluntariado ofrecido desde la web pública, sin cuenta. Ahí solo
+//      hay nombre/contacto y la donación TIME que lo originó. Postgres considera
+//      distintos los NULL, así que el @@unique no limita a un invitado por campaña.
 model CampaignVolunteer {
-  id          String           @id @default(cuid())
+  id          String            @id @default(cuid())
   campaignId  String
-  campaign    Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  volunteerId String
-  volunteer   VolunteerProfile @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  campaign    Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  volunteerId String?
+  volunteer   VolunteerProfile? @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+
+  // Voluntario invitado (sin cuenta): datos de contacto declarados al donar.
+  guestName  String?
+  guestEmail String?
+  guestPhone String?
+  // Donación TIME que originó la inscripción (trazabilidad web → campaña).
+  donationId String?   @unique
+  donation   Donation? @relation(fields: [donationId], references: [id], onDelete: SetNull)
+
   skills      VolunteerSkill[] @default([]) // habilidades que ofrece en ESTA campaña
   note        String? // mensaje / disponibilidad declarada
   createdAt   DateTime         @default(now())
@@ -414,6 +430,8 @@ model Donation {
   events     TraceEvent[]
   movements  InventoryMovement[]
   dispatchItems DispatchItem[]
+  // Inscripción en la campaña generada por una donación de voluntariado (TIME).
+  campaignVolunteer CampaignVolunteer?
 }
 
 model Payment {

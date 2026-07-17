@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -15,13 +16,25 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
-import { CreateDonationDto } from './dto/create-donation.dto';
+import { CreateDonationDto, Weekday } from './dto/create-donation.dto';
 import { UpdateDonationStatusDto } from './dto/update-donation-status.dto';
 import { ConfirmPaymentDto } from './dto/confirm-payment.dto';
 import { QueryDonationsDto } from './dto/query-donations.dto';
 
+const DAY_LABEL: Record<Weekday, string> = {
+  MON: 'Lun',
+  TUE: 'Mar',
+  WED: 'Mié',
+  THU: 'Jue',
+  FRI: 'Vie',
+  SAT: 'Sáb',
+  SUN: 'Dom',
+};
+
 @Injectable()
 export class DonationsService {
+  private readonly logger = new Logger(DonationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -85,12 +98,89 @@ export class DonationsService {
       await this.applyCampaignContribution(dto.campaignId, dto.amount ?? 0);
     }
 
+    // Voluntariado a una campaña: el donante entra a sus voluntarios. Sin esto la
+    // oferta de ayuda moría como donación y el organizador nunca la veía.
+    if (dto.campaignId && dto.type === DonationType.TIME) {
+      await this.enrollCampaignVolunteer(dto, donation.id, user);
+    }
+
     await this.audit.log(user?.id ?? null, 'create', 'Donation', donation.id, {
       type: donation.type,
       code: donation.code,
     });
 
     return donation;
+  }
+
+  /**
+   * Inscribe al donante de voluntariado en los voluntarios de la campaña.
+   *
+   * Con sesión se engancha a su VolunteerProfile (así puede entrar a brigadas);
+   * sin ella queda como invitado, con el contacto que declaró al donar. Falla en
+   * silencio: la donación ya está registrada y no se pierde por no poder inscribir.
+   */
+  private async enrollCampaignVolunteer(
+    dto: CreateDonationDto,
+    donationId: string,
+    user?: AuthUser,
+  ) {
+    const campaignId = dto.campaignId;
+    if (!campaignId) return;
+
+    const skills = dto.volunteerSkills ?? [];
+    const note = this.buildVolunteerNote(dto);
+
+    try {
+      if (user?.id) {
+        const profile = await this.prisma.volunteerProfile.upsert({
+          where: { userId: user.id },
+          update: {},
+          create: { userId: user.id, skills },
+        });
+        // Si ya estaba inscrito se refresca con lo último que ofreció.
+        await this.prisma.campaignVolunteer.upsert({
+          where: {
+            campaignId_volunteerId: { campaignId, volunteerId: profile.id },
+          },
+          update: { skills, note, donationId },
+          create: { campaignId, volunteerId: profile.id, skills, note, donationId },
+        });
+        return;
+      }
+
+      await this.prisma.campaignVolunteer.create({
+        data: {
+          campaignId,
+          donationId,
+          guestName: dto.donorName?.trim() || null,
+          guestEmail: dto.donorEmail?.trim() || null,
+          guestPhone: dto.donorPhone?.trim() || null,
+          skills,
+          note,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        `No se pudo inscribir al voluntario de la donación ${donationId}: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+    }
+  }
+
+  /** Disponibilidad + mensaje, en una línea legible para el organizador. */
+  private buildVolunteerNote(dto: CreateDonationDto): string | undefined {
+    const parts: string[] = [];
+    if (dto.volunteerDays?.length) {
+      const days = dto.volunteerDays.map((d) => DAY_LABEL[d]).join(', ');
+      parts.push(`Días: ${days}`);
+    }
+    if (dto.volunteerStartTime && dto.volunteerEndTime) {
+      parts.push(`Horario: ${dto.volunteerStartTime} a ${dto.volunteerEndTime}`);
+    }
+    const message = dto.description?.trim();
+    if (message) parts.push(message);
+    return parts.length ? parts.join(' · ') : undefined;
   }
 
   // Suma el aporte al total recaudado de la campaña y marca FUNDED si llega a la meta.

@@ -52,15 +52,28 @@ export class CampaignVolunteersService {
       ]),
     );
 
-    return enrollments.map((e) => ({
-      id: e.id,
-      volunteerId: e.volunteerId,
-      skills: e.skills,
-      note: e.note,
-      createdAt: e.createdAt,
-      user: e.volunteer.user,
-      brigade: brigadeByVolunteer.get(e.volunteerId) ?? null,
-    }));
+    return enrollments.map((e) => {
+      // Sin cuenta: se ofreció desde la web al donar voluntariado. Solo hay
+      // contacto declarado, y no puede entrar a una brigada.
+      const account = e.volunteer?.user ?? null;
+      return {
+        id: e.id,
+        volunteerId: e.volunteerId,
+        skills: e.skills,
+        note: e.note,
+        createdAt: e.createdAt,
+        isGuest: !account,
+        donationId: e.donationId,
+        user: account,
+        // Contacto unificado: da igual si viene de la cuenta o del formulario.
+        fullName: account?.fullName ?? e.guestName ?? 'Voluntario',
+        email: account?.email ?? e.guestEmail ?? null,
+        phone: account?.phone ?? e.guestPhone ?? null,
+        brigade: e.volunteerId
+          ? brigadeByVolunteer.get(e.volunteerId) ?? null
+          : null,
+      };
+    });
   }
 
   /** Estado de inscripción del usuario autenticado (para el botón "Inscribirme"). */
@@ -130,10 +143,21 @@ export class CampaignVolunteersService {
     return this.deleteEnrollment(campaignId, profile.id, user.id);
   }
 
-  /** El organizador quita a un voluntario de la campaña. */
+  /**
+   * El organizador quita a un voluntario de la campaña. Acepta el id del
+   * VolunteerProfile o el de la inscripción: los invitados no tienen perfil, así
+   * que su fila solo se puede señalar por el id de la inscripción.
+   */
   async remove(campaignId: string, volunteerId: string, user: AuthUser) {
     await this.campaigns.assertCanManage(campaignId, user);
-    return this.deleteEnrollment(campaignId, volunteerId, user.id);
+    const enrollment = await this.prisma.campaignVolunteer.findFirst({
+      where: {
+        campaignId,
+        OR: [{ volunteerId }, { id: volunteerId }],
+      },
+    });
+    if (!enrollment) throw new NotFoundException('Inscripción no encontrada');
+    return this.deleteEnrollmentById(enrollment.id, enrollment.volunteerId, campaignId, user.id);
   }
 
   private async createEnrollment(
@@ -173,15 +197,28 @@ export class CampaignVolunteersService {
       where: { campaignId_volunteerId: { campaignId, volunteerId } },
     });
     if (!enrollment) throw new NotFoundException('Inscripción no encontrada');
+    return this.deleteEnrollmentById(enrollment.id, volunteerId, campaignId, actorId);
+  }
 
-    // Al salir de la campaña también deja de ser miembro de sus brigadas.
+  private async deleteEnrollmentById(
+    id: string,
+    volunteerId: string | null,
+    campaignId: string,
+    actorId: string,
+  ) {
+    // Al salir de la campaña también deja de ser miembro de sus brigadas. Un
+    // invitado nunca estuvo en una, así que no hay nada que limpiar.
     await this.prisma.$transaction([
-      this.prisma.brigadeMember.deleteMany({
-        where: { volunteerId, brigade: { campaignId } },
-      }),
-      this.prisma.campaignVolunteer.delete({ where: { id: enrollment.id } }),
+      ...(volunteerId
+        ? [
+            this.prisma.brigadeMember.deleteMany({
+              where: { volunteerId, brigade: { campaignId } },
+            }),
+          ]
+        : []),
+      this.prisma.campaignVolunteer.delete({ where: { id } }),
     ]);
-    await this.audit.log(actorId, 'delete', 'CampaignVolunteer', enrollment.id, {
+    await this.audit.log(actorId, 'delete', 'CampaignVolunteer', id, {
       campaignId,
     });
     return { deleted: true };
