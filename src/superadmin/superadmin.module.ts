@@ -4,9 +4,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SuperadminController } from './superadmin.controller';
 import { SuperadminService } from './superadmin.service';
 import { SuperadminGuard } from './superadmin.guard';
+import { DonationsModule } from '../donations/donations.module';
 
 @Module({
   imports: [
+    DonationsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

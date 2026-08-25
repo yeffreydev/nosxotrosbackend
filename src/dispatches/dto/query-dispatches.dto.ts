@@ -9,4 +9,9 @@ export class QueryDispatchesDto {
   @IsOptional()
   @IsString()
   emergencyId?: string;
+
+  // Despachos que van a una zona de atención concreta.
+  @IsOptional()
+  @IsString()
+  zoneId?: string;
 }

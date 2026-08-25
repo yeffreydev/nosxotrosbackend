@@ -67,4 +67,22 @@ export class SuperadminController {
   deleteCampaign(@Param('id') id: string) {
     return this.service.deleteCampaign(id);
   }
+
+  // Verificación de pagos: todo el dinero que llega, con su prueba de abono.
+  @Public()
+  @UseGuards(SuperadminGuard)
+  @Get('payments')
+  payments() {
+    return this.service.listPayments();
+  }
+
+  @Public()
+  @UseGuards(SuperadminGuard)
+  @Post('payments/:donationId/confirm')
+  confirmPayment(
+    @Param('donationId') donationId: string,
+    @Body() dto: { reference?: string },
+  ) {
+    return this.service.confirmPayment(donationId, dto?.reference);
+  }
 }

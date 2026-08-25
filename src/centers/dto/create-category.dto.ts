@@ -1,6 +1,14 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
+import { CategoryKind } from '@prisma/client';
 
-// Categoría de inventario / necesidades (Alimentos, Agua, …).
+// Categoría de inventario / necesidades (Alimentos, Herramientas, Combustible…).
+// El organizador puede crear las suyas desde las metas de la campaña.
 export class CreateCategoryDto {
   @IsString()
   @MinLength(2)
@@ -16,4 +24,9 @@ export class CreateCategoryDto {
   @IsString()
   @MaxLength(8)
   icon?: string;
+
+  // Qué tipo de ayuda representa: bienes, herramientas, transporte, combustible…
+  @IsOptional()
+  @IsEnum(CategoryKind)
+  kind?: CategoryKind;
 }

@@ -109,6 +109,11 @@ export class BeneficiariesService {
             needs: record.needs ?? [],
             emergencyId: record.emergencyId,
             campaignId: record.campaignId,
+            // La ficha levantada sin señal trae su zona y su foto igual que la
+            // creada en línea; perderlas al sincronizar dejaba beneficiarios
+            // huérfanos de zona y sin evidencia del empadronamiento.
+            zoneId: record.zoneId,
+            photoUrl: record.photoUrl,
             clientId: record.clientId,
             registeredById: userId,
             status: BeneficiaryStatus.VALIDATED,

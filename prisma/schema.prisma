@@ -143,6 +143,18 @@ enum CampaignStatus {
   CANCELLED
 }
 
+// Tipo de categoría: separa lo que se acopia (bienes) de lo que se necesita
+// como servicio/apoyo (transporte, combustible, mano de obra…). Sirve para
+// agrupar las metas de la campaña ("comida", "herramientas", "combustible").
+enum CategoryKind {
+  SUPPLY // bienes de acopio: alimentos, agua, abrigo, medicinas…
+  TOOL // herramientas y equipos
+  TRANSPORT // transporte / logística
+  FUEL // combustible
+  SERVICE // servicios y mano de obra
+  OTHER
+}
+
 enum CampaignCategory {
   HEALTH // salud
   EDUCATION // educación
@@ -238,7 +250,11 @@ model VolunteerProfile {
   schedules   VolunteerSchedule[]
 }
 
-// Registro de horario de trabajo de un voluntario (entrada/salida).
+// Disponibilidad / horario de un voluntario. Dos formas:
+//   - Puntual: `date` con el día concreto y `weekdays` vacío.
+//   - Recurrente: `weekdays` con los días de la semana (0=domingo … 6=sábado)
+//     y `date` en null; vale todas las semanas dentro de validFrom/validTo.
+// Con esto se puede responder "¿con qué voluntarios cuento hoy?".
 model VolunteerSchedule {
   id          String           @id @default(cuid())
   volunteerId String
@@ -246,12 +262,16 @@ model VolunteerSchedule {
   campaignId  String?
   campaign    Campaign?        @relation(fields: [campaignId], references: [id])
   date        DateTime?
+  weekdays    Int[]            @default([]) // 0=domingo … 6=sábado (recurrente)
+  validFrom   DateTime? // desde cuándo vale la recurrencia
+  validTo     DateTime? // hasta cuándo vale la recurrencia
   startTime   String // "08:00"
   endTime     String // "13:00"
   note        String?
   createdAt   DateTime         @default(now())
 
   @@index([volunteerId])
+  @@index([campaignId])
 }
 
 // Inscripción de un voluntario a una campaña. El organizador solo puede sumar a
@@ -342,6 +362,8 @@ model Center {
   contactPhone  String?
   openingHours  String? // horario libre, ej. "Lun-Vie 8:00-18:00"
   mapUrl        String? // enlace externo del mapa (Google Maps / Waze) para abrir la ruta
+  photoUrl      String? // foto del local: ayuda al donante a reconocerlo al llegar
+  reference     String? // referencia / hito ("frente al mercado central")
   organizationId String?
   organization  Organization? @relation(fields: [organizationId], references: [id])
   campaignId    String?
@@ -361,10 +383,15 @@ model Category {
   name  String          @unique // ej. Alimentos, Agua, Abrigo, Higiene, Medicinas
   unit  String          @default("unidad")
   icon  String?
+  kind  CategoryKind    @default(SUPPLY)
   items InventoryItem[]
   needs Need[]
 }
 
+// Un ítem = un producto del almacén de un centro. La identidad del producto es
+// `nameKey` (nombre normalizado: sin acentos, sin mayúsculas, sin espacios de
+// más) + unidad de medida: al registrar "Frazadas" y luego "frazadas" se suma
+// al mismo ítem en vez de crear una línea nueva.
 model InventoryItem {
   id         String   @id @default(cuid())
   centerId   String
@@ -372,6 +399,7 @@ model InventoryItem {
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id])
   name       String
+  nameKey    String   @default("") // nombre normalizado para agrupar/sumar
   sku        String   @unique @default(cuid()) // código QR
   quantity   Int      @default(0)
   unit       String   @default("unidad")
@@ -380,6 +408,8 @@ model InventoryItem {
   updatedAt  DateTime @updatedAt
 
   movements InventoryMovement[]
+
+  @@index([centerId, nameKey, unit])
 }
 
 model InventoryMovement {
@@ -443,6 +473,12 @@ model Payment {
   amount        Float
   currency      String        @default("PEN")
   reference     String? // referencia pasarela (Yape/Plin/tarjeta)
+  payerAccountNumber String? // cuenta/nro. desde la que el donante dice haber transferido
+  // Prueba de la transferencia: el donante declara el nro. de operación, sube la
+  // captura del voucher, o ambos. Sin al menos uno no se puede registrar un
+  // aporte en dinero (el administrador no tendría con qué cotejar el abono).
+  operationNumber String? // nro. de operación / constancia que da Yape, Plin o el banco
+  receiptUrl      String? // captura del comprobante subida por el donante
   paidAt        DateTime?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -481,10 +517,16 @@ model Campaign {
   backersCount Int              @default(0) // número de donantes
   // Voluntarios que busca la campaña (habilidades). Vacío = no busca voluntarios.
   volunteerSkills VolunteerSkill[] @default([])
+  // Meta de voluntarios: cuántas personas necesita la campaña (null = sin meta).
+  volunteerGoal Int?
   deadline     DateTime? // fecha límite opcional
   lat          Float?
   lng          Float?
-  district     String?
+  mapUrl       String? // enlace del mapa de la ubicación principal de la campaña
+  address      String? // dirección / referencia de la ubicación principal
+  region       String? // región (departamento) del selector Perú
+  province     String? // provincia del selector Perú
+  district     String? // distrito del selector Perú
   featured     Boolean          @default(false) // destacada por gobernanza
 
   // Datos de pago que el organizador publica para donantes (Yape / cuenta)
@@ -492,6 +534,7 @@ model Campaign {
   yapePhone     String?
   bankName      String?
   bankAccount   String?
+  cci           String?
   accountHolder String?
   qrImageUrl    String? // URL de imagen del QR de pago (Yape/Plin)
 
@@ -507,6 +550,7 @@ model Campaign {
 
   donations Donation[]
   updates   CampaignUpdate[]
+  needs     Need[]
   zones     Zone[]
   brigades  Brigade[]
   centers   Center[]
@@ -605,23 +649,33 @@ model EmergencyReport {
   reviewedAt    DateTime?
 }
 
-// Necesidades declaradas: "Faltan 200 frazadas, no traiga botellas de agua"
+// Necesidades declaradas: "Faltan 200 frazadas, no traiga botellas de agua".
+// A nivel de campaña son las METAS en especie ("se necesitan 200 frazadas"):
+// `titleKey` (título normalizado) + `unit` es la misma clave que usa el
+// inventario, así que al ingresar productos con ese nombre la meta avanza sola.
 model Need {
   id          String     @id @default(cuid())
   emergencyId String?
   emergency   Emergency? @relation(fields: [emergencyId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    Campaign?  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   zoneId      String?
   zone        Zone?      @relation(fields: [zoneId], references: [id], onDelete: Cascade)
   categoryId  String?
   category    Category?  @relation(fields: [categoryId], references: [id])
   title       String
+  titleKey    String     @default("") // título normalizado: enlaza la meta con el inventario
   targetQty   Int        @default(0)
-  fulfilledQty Int       @default(0)
+  fulfilledQty Int       @default(0) // recolectado (entradas de inventario)
+  deliveredQty Int       @default(0) // ya despachado / entregado
   unit        String     @default("unidad")
   priority    Severity   @default(MEDIUM)
   isBlocked   Boolean    @default(false) // "no traer X"
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+
+  @@index([campaignId])
+  @@index([titleKey])
 }
 
 // ───────────────── Operaciones de campaña: zonas + brigadas ─────────────────
@@ -641,6 +695,9 @@ model Zone {
   severity    Severity   @default(MEDIUM) // nivel de emergencia de la zona
   lat         Float?
   lng         Float?
+  // Zona principal de la campaña: se crea sola con la ubicación que el
+  // organizador declara al crear la campaña. Solo puede haber una.
+  isPrimary   Boolean    @default(false)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
@@ -754,6 +811,7 @@ model DispatchItem {
   dispatch     Dispatch   @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
   description  String
   quantity     Int        @default(1)
+  unit         String?
   donationId   String?
   donation     Donation?  @relation(fields: [donationId], references: [id])
   beneficiaryId String?

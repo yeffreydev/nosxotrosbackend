@@ -4,6 +4,7 @@ import {
   BeneficiaryStatus,
   CampaignCategory,
   CampaignStatus,
+  CategoryKind,
   CenterStatus,
   DispatchStatus,
   DonationStatus,
@@ -20,6 +21,7 @@ import {
   VolunteerSkill,
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { backfillKeys } from './backfill-keys';
 
 const prisma = new PrismaClient();
 
@@ -43,18 +45,25 @@ async function main() {
 
   // ───────── Categories (upsert by unique name) ─────────
   const categoryDefs = [
-    { name: 'Alimentos', unit: 'kg', icon: '🍚' },
-    { name: 'Agua', unit: 'litro', icon: '💧' },
-    { name: 'Abrigo', unit: 'unidad', icon: '🧥' },
-    { name: 'Higiene', unit: 'kit', icon: '🧼' },
-    { name: 'Medicinas', unit: 'caja', icon: '💊' },
-    { name: 'Botiquín', unit: 'unidad', icon: '🩹' },
+    { name: 'Alimentos', unit: 'kg', icon: '🍚', kind: CategoryKind.SUPPLY },
+    { name: 'Agua', unit: 'litro', icon: '💧', kind: CategoryKind.SUPPLY },
+    { name: 'Abrigo', unit: 'unidad', icon: '🧥', kind: CategoryKind.SUPPLY },
+    { name: 'Higiene', unit: 'kit', icon: '🧼', kind: CategoryKind.SUPPLY },
+    // Sin "Medicinas": la plataforma no recibe medicamentos (sí botiquines).
+    { name: 'Botiquín', unit: 'unidad', icon: '🩹', kind: CategoryKind.SUPPLY },
+    { name: 'Ropa', unit: 'unidad', icon: '👕', kind: CategoryKind.SUPPLY },
+    { name: 'Limpieza', unit: 'unidad', icon: '🧴', kind: CategoryKind.SUPPLY },
+    { name: 'Herramientas', unit: 'unidad', icon: '🛠️', kind: CategoryKind.TOOL },
+    { name: 'Materiales', unit: 'unidad', icon: '🧱', kind: CategoryKind.TOOL },
+    { name: 'Transporte', unit: 'viaje', icon: '🚚', kind: CategoryKind.TRANSPORT },
+    { name: 'Combustible', unit: 'galón', icon: '⛽', kind: CategoryKind.FUEL },
+    { name: 'Mano de obra', unit: 'hora', icon: '🤝', kind: CategoryKind.SERVICE },
   ];
   const categories: Record<string, { id: string; unit: string }> = {};
   for (const c of categoryDefs) {
     const cat = await prisma.category.upsert({
       where: { name: c.name },
-      update: { unit: c.unit, icon: c.icon },
+      update: { unit: c.unit, icon: c.icon, kind: c.kind },
       create: c,
     });
     categories[c.name] = { id: cat.id, unit: cat.unit };
@@ -292,11 +301,11 @@ async function main() {
             priority: Severity.CRITICAL,
           },
           {
-            title: 'Medicinas básicas y botiquines',
-            categoryId: categories['Medicinas'].id,
+            title: 'Botiquines de primeros auxilios',
+            categoryId: categories['Botiquín'].id,
             targetQty: 150,
             fulfilledQty: 30,
-            unit: 'caja',
+            unit: 'unidad',
             priority: Severity.HIGH,
           },
         ],
@@ -310,6 +319,9 @@ async function main() {
     data: {
       name: 'Centro de Acopio Cercado',
       address: 'Av. La Marina 101, Cercado, Arequipa',
+      reference: 'A media cuadra del puente Grau, portón verde',
+      openingHours: 'Lun-Sáb 8:00-18:00',
+      mapUrl: 'https://www.google.com/maps/search/?api=1&query=-16.398,-71.537',
       lat: -16.398,
       lng: -71.537,
       capacity: 2000,
@@ -323,6 +335,9 @@ async function main() {
     data: {
       name: 'Centro de Acopio Cayma',
       address: 'Av. Ejército 500, Cayma, Arequipa',
+      reference: 'Frente al mercado de Cayma, local con toldo azul',
+      openingHours: 'Lun-Vie 9:00-17:00',
+      mapUrl: 'https://www.google.com/maps/search/?api=1&query=-16.376,-71.548',
       lat: -16.376,
       lng: -71.548,
       capacity: 1500,
@@ -368,7 +383,7 @@ async function main() {
   ];
   const c2Items = [
     await addItem(center2.id, 'Alimentos', 'Conservas surtidas', 150),
-    await addItem(center2.id, 'Medicinas', 'Botiquines básicos', 60),
+    await addItem(center2.id, 'Botiquín', 'Botiquines básicos', 60),
     await addItem(center2.id, 'Agua', 'Bidones de agua', 100),
   ];
 
@@ -927,6 +942,12 @@ async function main() {
     },
   });
   console.log('  ✓ 3 campañas de crecimiento con avances y aportes');
+
+  // Claves normalizadas de inventario y metas (agrupación y progreso automático).
+  const keys = await backfillKeys(prisma);
+  console.log(
+    `  ✓ claves normalizadas: ${keys.itemsFixed} ítems, ${keys.needsFixed} necesidades`,
+  );
 
   console.log('✅ Seed completado.');
   console.log('   Usuarios demo (password: nosxotros123):');

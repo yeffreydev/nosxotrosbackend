@@ -1,10 +1,23 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DispatchStatus, DonationStatus, BeneficiaryStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { CreateDispatchDto } from './dto/create-dispatch.dto';
 import { UpdateDispatchStatusDto } from './dto/update-dispatch-status.dto';
 import { QueryDispatchesDto } from './dto/query-dispatches.dto';
+
+// La zona de atención viaja siempre con el despacho: es a dónde va la ayuda y
+// lo que la app pinta como destino.
+const DISPATCH_INCLUDE = {
+  items: true,
+  fromCenter: true,
+  emergency: true,
+  zone: { select: { id: true, name: true, reference: true, mapUrl: true, severity: true } },
+} as const;
 
 @Injectable()
 export class DispatchesService {
@@ -19,31 +32,47 @@ export class DispatchesService {
     });
     if (!center) throw new NotFoundException('Centro de origen no encontrado');
 
+    // Zona de atención: es el destino. Si se elige, de ella salen la dirección y
+    // el pin cuando no se escriben a mano, y tiene que ser de la misma campaña
+    // que el centro de origen para no mandar ayuda a otra operación.
+    const zone = dto.zoneId
+      ? await this.prisma.zone.findUnique({ where: { id: dto.zoneId } })
+      : null;
+    if (dto.zoneId && !zone) throw new NotFoundException('Zona no encontrada');
+    if (zone && center.campaignId && zone.campaignId !== center.campaignId) {
+      throw new BadRequestException(
+        'La zona de atención no pertenece a la campaña del centro de origen',
+      );
+    }
+
     const dispatch = await this.prisma.$transaction(async (tx) => {
       return tx.dispatch.create({
         data: {
           fromCenterId: dto.fromCenterId,
-          emergencyId: dto.emergencyId,
-          destLat: dto.destLat,
-          destLng: dto.destLng,
-          destAddress: dto.destAddress,
+          emergencyId: dto.emergencyId ?? zone?.emergencyId ?? undefined,
+          zoneId: zone?.id,
+          destLat: dto.destLat ?? zone?.lat ?? undefined,
+          destLng: dto.destLng ?? zone?.lng ?? undefined,
+          destAddress: dto.destAddress ?? zone?.reference ?? undefined,
           driverName: dto.driverName,
           status: DispatchStatus.PREPARING,
           items: {
             create: dto.items.map((i) => ({
               description: i.description,
               quantity: i.quantity ?? 1,
+              unit: i.unit,
               donationId: i.donationId,
               beneficiaryId: i.beneficiaryId,
             })),
           },
         },
-        include: { items: true, fromCenter: true, emergency: true },
+        include: DISPATCH_INCLUDE,
       });
     });
 
     await this.audit.log(userId, 'create', 'Dispatch', dispatch.id, {
       items: dto.items.length,
+      zoneId: zone?.id,
     });
     return dispatch;
   }
@@ -53,8 +82,9 @@ export class DispatchesService {
       where: {
         ...(query.status ? { status: query.status } : {}),
         ...(query.emergencyId ? { emergencyId: query.emergencyId } : {}),
+        ...(query.zoneId ? { zoneId: query.zoneId } : {}),
       },
-      include: { items: true, fromCenter: true, emergency: true },
+      include: DISPATCH_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -125,7 +155,7 @@ export class DispatchesService {
       return tx.dispatch.update({
         where: { id },
         data,
-        include: { items: true, fromCenter: true, emergency: true },
+        include: DISPATCH_INCLUDE,
       });
     });
 

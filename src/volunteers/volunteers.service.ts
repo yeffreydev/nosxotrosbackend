@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -7,6 +8,7 @@ import { randomUUID } from 'crypto';
 import { Prisma, Role, VolunteerProfile } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
+import { startOfCalendarDay } from '../common/date.util';
 import { UpdateVolunteerDto } from './dto/update-volunteer.dto';
 import { CreateVolunteerDto } from './dto/create-volunteer.dto';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
@@ -73,6 +75,25 @@ export class VolunteersService {
     return { ...rest, brigades };
   }
 
+  // ───────── Disponibilidad del propio voluntario ─────────
+  // El voluntario declara cuándo puede venir sin depender de que el organizador
+  // se lo pregunte. Es la misma tabla que ve el organizador en su panel.
+
+  async listMySchedules(userId: string) {
+    const profile = await this.ensureProfile(userId);
+    return this.listSchedules(profile.id);
+  }
+
+  async addMySchedule(userId: string, dto: CreateScheduleDto) {
+    const profile = await this.ensureProfile(userId);
+    return this.addSchedule(profile.id, dto, userId);
+  }
+
+  async removeMySchedule(userId: string, scheduleId: string) {
+    const profile = await this.ensureProfile(userId);
+    return this.removeSchedule(profile.id, scheduleId, userId);
+  }
+
   // ───────── Gestión por el gestor (nivel de sistema) ─────────
 
   /** Alta de voluntario sin cuenta: crea User stub (VOLUNTEER) + perfil. */
@@ -125,16 +146,45 @@ export class VolunteersService {
     });
   }
 
+  /**
+   * Registra disponibilidad: un día concreto (`date`) o días de la semana
+   * recurrentes (`weekdays`). Si llegan los dos, manda la fecha: un día suelto
+   * es más específico que "todos los martes".
+   *
+   * Las fechas se guardan como días del calendario (medianoche UTC del día
+   * escrito). Si se guardaran como instantes, un horario del martes declarado
+   * desde Perú se leería como del lunes al buscar quién viene hoy.
+   */
   async addSchedule(volunteerId: string, dto: CreateScheduleDto, userId: string) {
     const profile = await this.prisma.volunteerProfile.findUnique({
       where: { id: volunteerId },
     });
     if (!profile) throw new NotFoundException('Voluntario no encontrado');
+
+    if (dto.endTime <= dto.startTime) {
+      throw new BadRequestException('La hora de fin debe ser posterior a la de inicio');
+    }
+    const weekdays = dto.date ? [] : dto.weekdays ?? [];
+    if (!dto.date && weekdays.length === 0) {
+      throw new BadRequestException(
+        'Elige una fecha o marca los días de la semana en que puede venir',
+      );
+    }
+    const day = this.calendarDay(dto.date, 'La fecha del horario no es válida');
+    const validFrom = this.calendarDay(dto.validFrom, 'La fecha "desde" no es válida');
+    const validTo = this.calendarDay(dto.validTo, 'La fecha "hasta" no es válida');
+    if (validFrom && validTo && validTo < validFrom) {
+      throw new BadRequestException('La fecha "hasta" debe ser posterior a la de inicio');
+    }
+
     const schedule = await this.prisma.volunteerSchedule.create({
       data: {
         volunteerId,
         campaignId: dto.campaignId,
-        date: dto.date ? new Date(dto.date) : undefined,
+        date: day,
+        weekdays,
+        validFrom,
+        validTo,
         startTime: dto.startTime,
         endTime: dto.endTime,
         note: dto.note,
@@ -144,11 +194,29 @@ export class VolunteersService {
     return schedule;
   }
 
+  /** Día del calendario de una fecha opcional del formulario. */
+  private calendarDay(value: string | undefined, message: string): Date | null {
+    if (!value) return null;
+    const day = startOfCalendarDay(value);
+    if (!day) throw new BadRequestException(message);
+    return day;
+  }
+
   listSchedules(volunteerId: string) {
     return this.prisma.volunteerSchedule.findMany({
       where: { volunteerId },
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
     });
+  }
+
+  async removeSchedule(volunteerId: string, scheduleId: string, userId: string) {
+    const schedule = await this.prisma.volunteerSchedule.findFirst({
+      where: { id: scheduleId, volunteerId },
+    });
+    if (!schedule) throw new NotFoundException('Horario no encontrado');
+    await this.prisma.volunteerSchedule.delete({ where: { id: scheduleId } });
+    await this.audit.log(userId, 'delete', 'VolunteerSchedule', scheduleId);
+    return { deleted: true };
   }
 
   async updateMe(userId: string, dto: UpdateVolunteerDto) {

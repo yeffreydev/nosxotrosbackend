@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
+import { NeedsProgressService } from '../common/needs-progress.service';
+import { normalizeKey, normalizeUnit } from '../common/text.util';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CampaignsService } from '../campaigns/campaigns.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
@@ -37,6 +39,7 @@ export class ZonesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly campaigns: CampaignsService,
+    private readonly needsProgress: NeedsProgressService,
   ) {}
 
   /** Zonas de una campaña (lectura pública para voluntarios/donantes). */
@@ -44,7 +47,8 @@ export class ZonesService {
     return this.prisma.zone.findMany({
       where: { campaignId },
       include: ZONE_INCLUDE,
-      orderBy: { createdAt: 'asc' },
+      // La zona principal (la ubicación de la campaña) siempre primero.
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     });
   }
 
@@ -125,19 +129,26 @@ export class ZonesService {
   }
 
   async addNeed(zoneId: string, dto: CreateNeedDto, user: AuthUser) {
-    await this.loadOwned(zoneId, user);
+    const zone = await this.loadOwned(zoneId, user);
+    const title = dto.title.trim();
+    const unit = normalizeUnit(dto.unit);
     const need = await this.prisma.need.create({
       data: {
         zoneId,
-        title: dto.title,
+        // La necesidad de una zona también es una meta de la campaña: lleva su
+        // clave normalizada para que el inventario la haga avanzar sola.
+        campaignId: zone.campaignId,
+        title,
+        titleKey: normalizeKey(title),
         categoryId: dto.categoryId,
         targetQty: dto.targetQty,
-        unit: dto.unit,
+        unit,
         priority: dto.priority,
         isBlocked: dto.isBlocked,
       },
       include: { category: true },
     });
+    await this.needsProgress.syncCampaign(zone.campaignId);
     await this.audit.log(user.id, 'create', 'Need', need.id, { zoneId });
     return need;
   }

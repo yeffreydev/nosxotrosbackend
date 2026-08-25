@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { Role, User } from '@prisma/client';
+import { Prisma, Role, User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
@@ -53,20 +53,39 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const role = dto.role ?? Role.DONOR;
 
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        passwordHash,
-        fullName: dto.fullName,
-        role,
-        phone: dto.phone,
-        locale: dto.locale ?? 'es',
-        ...(role === Role.VOLUNTEER
-          ? { volunteerProfile: { create: {} } }
-          : {}),
-      },
-      include: { volunteerProfile: true, organization: true },
-    });
+    let user: User;
+    try {
+      user = await this.prisma.user.create({
+        data: {
+          email: dto.email,
+          passwordHash,
+          fullName: dto.fullName,
+          role,
+          phone: dto.phone?.trim() || undefined,
+          locale: dto.locale ?? 'es',
+          ...(role === Role.VOLUNTEER
+            ? { volunteerProfile: { create: {} } }
+            : {}),
+        },
+        include: { volunteerProfile: true, organization: true },
+      });
+    } catch (err) {
+      // El teléfono también es único: sin este mapeo el registro moría con un
+      // 500 opaco y la persona no sabía qué dato cambiar.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        const target = err.meta?.target;
+        const fields = Array.isArray(target) ? target : [String(target ?? '')];
+        throw new ConflictException(
+          fields.includes('phone')
+            ? 'Ese teléfono ya está registrado en otra cuenta'
+            : 'El email ya está registrado',
+        );
+      }
+      throw err;
+    }
 
     await this.audit.log(user.id, 'register', 'User', user.id, { role });
 

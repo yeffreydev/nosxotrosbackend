@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   MinLength,
   ValidateNested,
@@ -19,6 +20,13 @@ export class DispatchItemDto {
   @IsInt()
   @Min(1)
   quantity?: number;
+
+  // Unidad de medida de lo que se manda (cajas, kg, litros…): sin ella el
+  // destino recibe "20 agua" y no sabe si son botellas o bidones.
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  unit?: string;
 
   @IsOptional()
   @IsString()
@@ -36,6 +44,12 @@ export class CreateDispatchDto {
   @IsOptional()
   @IsString()
   emergencyId?: string;
+
+  // Zona de atención a la que va la ayuda. De ella salen la dirección y el pin
+  // del destino si no se escriben a mano.
+  @IsOptional()
+  @IsString()
+  zoneId?: string;
 
   @IsOptional()
   @IsNumber()

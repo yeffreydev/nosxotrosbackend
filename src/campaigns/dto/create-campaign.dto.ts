@@ -2,12 +2,14 @@ import {
   ArrayUnique,
   IsArray,
   IsEnum,
+  IsInt,
   IsISO8601,
   IsNumber,
   IsOptional,
   IsPositive,
   IsString,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 import { CampaignCategory, CampaignStatus, VolunteerSkill } from '@prisma/client';
@@ -31,11 +33,11 @@ export class CreateCampaignDto {
   @IsEnum(CampaignCategory)
   category?: CampaignCategory;
 
-  // Meta opcional: la campaña puede tener o no una meta de recaudación.
-  @IsOptional()
+  // Meta obligatoria con mínimo de 10,000 soles (configurable por variable de entorno)
   @IsNumber()
   @IsPositive()
-  goalAmount?: number;
+  @Min(10000)
+  goalAmount!: number;
 
   // Tipos de voluntarios que busca (habilidades). Vacío = no busca voluntarios.
   @IsOptional()
@@ -43,6 +45,12 @@ export class CreateCampaignDto {
   @ArrayUnique()
   @IsEnum(VolunteerSkill, { each: true })
   volunteerSkills?: VolunteerSkill[];
+
+  // Meta de voluntarios: cuántas personas necesita la campaña.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  volunteerGoal?: number;
 
   @IsOptional()
   @IsString()
@@ -59,6 +67,26 @@ export class CreateCampaignDto {
   @IsOptional()
   @IsNumber()
   lng?: number;
+
+  // Ubicación principal de la campaña. Con ella se crea sola la "zona principal"
+  // en Zonas al publicar la campaña.
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  mapUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  region?: string;
+
+  @IsOptional()
+  @IsString()
+  province?: string;
 
   @IsOptional()
   @IsString()
@@ -80,6 +108,10 @@ export class CreateCampaignDto {
   @IsOptional()
   @IsString()
   bankAccount?: string;
+
+  @IsOptional()
+  @IsString()
+  cci?: string;
 
   @IsOptional()
   @IsString()

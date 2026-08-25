@@ -6,8 +6,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CategoryKind,
+  CenterStatus,
+  Donation,
   DonationStatus,
   DonationType,
+  InventoryMovementType,
   PaymentMethod,
   PaymentStatus,
   Prisma,
@@ -15,6 +19,9 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
+import { NeedsProgressService } from '../common/needs-progress.service';
+import { normalizeKey } from '../common/text.util';
+import { isMedicineText, NO_MEDICINE_MSG } from '../common/policy';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CreateDonationDto, Weekday } from './dto/create-donation.dto';
 import { UpdateDonationStatusDto } from './dto/update-donation-status.dto';
@@ -38,6 +45,7 @@ export class DonationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly needs: NeedsProgressService,
   ) {}
 
   private resolvePaymentMethod(dto: CreateDonationDto): PaymentMethod {
@@ -53,6 +61,37 @@ export class DonationsService {
     if (dto.type === DonationType.TIME && !dto.donorPhone?.trim()) {
       throw new BadRequestException(
         'El teléfono es obligatorio para voluntariado',
+      );
+    }
+    // Especies (GOODS): sin centro destino la donación nunca llega a un
+    // almacén concreto y se pierde el rastro de a dónde entregarla.
+    if (dto.type === DonationType.GOODS && !dto.centerId?.trim()) {
+      throw new BadRequestException(
+        'Elige un centro de acopio para tu donación en especie',
+      );
+    }
+    // Política de plataforma: no se reciben medicamentos en especie.
+    if (dto.type === DonationType.GOODS && isMedicineText(dto.description)) {
+      throw new BadRequestException(NO_MEDICINE_MSG);
+    }
+    // Dinero (MONEY): la cuenta de origen es lo único que le permite al
+    // administrador cotejar la transferencia contra el estado de cuenta real
+    // antes de acreditarla.
+    if (dto.type === DonationType.MONEY && !dto.donorAccountNumber?.trim()) {
+      throw new BadRequestException(
+        'Indica el número de cuenta desde el que transferiste',
+      );
+    }
+    // Sin número de operación ni voucher, el administrador no tiene con qué
+    // cotejar el abono contra el estado de cuenta: la donación quedaría
+    // atrapada para siempre en "no acreditada".
+    if (
+      dto.type === DonationType.MONEY &&
+      !dto.operationNumber?.trim() &&
+      !dto.receiptUrl?.trim()
+    ) {
+      throw new BadRequestException(
+        'Adjunta el número de operación o la captura de tu comprobante',
       );
     }
     const method = this.resolvePaymentMethod(dto);
@@ -80,6 +119,12 @@ export class DonationsService {
             method,
             status: PaymentStatus.PENDING,
             amount,
+            payerAccountNumber:
+              dto.type === DonationType.MONEY
+                ? dto.donorAccountNumber?.trim()
+                : undefined,
+            operationNumber: dto.operationNumber?.trim() || undefined,
+            receiptUrl: dto.receiptUrl?.trim() || undefined,
           },
         },
         events: {
@@ -93,10 +138,9 @@ export class DonationsService {
       include: { payment: true, events: { orderBy: { createdAt: 'asc' } } },
     });
 
-    // Crowdfunding: el aporte monetario a una campaña suma al recaudado al instante.
-    if (dto.campaignId && dto.type === DonationType.MONEY) {
-      await this.applyCampaignContribution(dto.campaignId, dto.amount ?? 0);
-    }
+    // Crowdfunding: el aporte monetario solo suma al recaudado cuando un
+    // administrador lo acredita (ver confirmPayment) — mientras tanto es una
+    // promesa sin verificar y no debe inflar la meta pública de la campaña.
 
     // Voluntariado a una campaña: el donante entra a sus voluntarios. Sin esto la
     // oferta de ayuda moría como donación y el organizador nunca la veía.
@@ -348,7 +392,105 @@ export class DonationsService {
       status: dto.status,
     });
 
+    // Al marcar como recibida, la especie deja de ser una promesa y pasa a
+    // ser stock real del centro de acopio.
+    if (
+      dto.status === DonationStatus.RECEIVED &&
+      donation.type === DonationType.GOODS &&
+      donation.centerId
+    ) {
+      await this.registerGoodsInInventory(donation, user.id);
+    }
+
     return updated;
+  }
+
+  /**
+   * Registra una donación en especie ya recibida como stock del centro.
+   *
+   * Idempotente por `donationId`: si un manager cambia el estado varias veces
+   * (o lo revierte y lo vuelve a marcar), el ingreso al almacén no se duplica.
+   */
+  private async registerGoodsInInventory(donation: Donation, userId: string) {
+    if (!donation.centerId) return;
+    const already = await this.prisma.inventoryMovement.findFirst({
+      where: { donationId: donation.id },
+    });
+    if (already) return;
+
+    const center = await this.prisma.center.findUnique({
+      where: { id: donation.centerId },
+    });
+    if (!center) return;
+
+    const categoryId = donation.categoryId ?? (await this.defaultCategoryId());
+    const name = donation.description?.trim() || 'Donación en especie';
+    const nameKey = normalizeKey(name) || 'donacion en especie';
+    const unit = 'unidad';
+    const quantity = donation.quantity ?? 1;
+
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.inventoryItem.findFirst({
+        where: { centerId: donation.centerId!, nameKey, unit },
+      });
+      const item = existing
+        ? await tx.inventoryItem.update({
+            where: { id: existing.id },
+            data: { quantity: existing.quantity + quantity },
+          })
+        : await tx.inventoryItem.create({
+            data: {
+              centerId: donation.centerId!,
+              categoryId,
+              name,
+              nameKey,
+              quantity,
+              unit,
+            },
+          });
+
+      await tx.inventoryMovement.create({
+        data: {
+          itemId: item.id,
+          centerId: donation.centerId!,
+          type: InventoryMovementType.IN,
+          quantity,
+          reason: 'Donación recibida',
+          userId,
+          donationId: donation.id,
+        },
+      });
+
+      const newLoad = center.currentLoad + quantity;
+      await tx.center.update({
+        where: { id: donation.centerId! },
+        data: {
+          currentLoad: newLoad,
+          status: this.computeCenterStatus(newLoad, center.capacity),
+        },
+      });
+    });
+
+    await this.needs.syncCampaign(donation.campaignId);
+  }
+
+  private computeCenterStatus(load: number, capacity: number): CenterStatus {
+    if (capacity <= 0) return CenterStatus.OPEN;
+    const pct = (load / capacity) * 100;
+    if (pct >= 100) return CenterStatus.FULL;
+    if (pct >= 85) return CenterStatus.NEAR_FULL;
+    return CenterStatus.OPEN;
+  }
+
+  private async defaultCategoryId(): Promise<string> {
+    const existing = await this.prisma.category.findUnique({
+      where: { name: 'Otros' },
+    });
+    if (existing) return existing.id;
+    const created = await this.prisma.category.create({
+      data: { name: 'Otros', unit: 'unidad', icon: '📦', kind: CategoryKind.SUPPLY },
+    });
+    return created.id;
   }
 
   private statusTitle(status: DonationStatus): string {
@@ -368,11 +510,15 @@ export class DonationsService {
     }
   }
 
-  async confirmPayment(
-    id: string,
-    dto: ConfirmPaymentDto,
-    user?: AuthUser,
-  ) {
+  /**
+   * Acredita el pago de una donación en dinero.
+   *
+   * Solo un manager/admin la llama (ver controller), después de cotejar la
+   * transferencia contra `payerAccountNumber` y el estado de cuenta real. Es
+   * el único momento en que el aporte suma al recaudado público de la
+   * campaña — antes de esto la donación es una promesa sin verificar.
+   */
+  async confirmPayment(id: string, dto: ConfirmPaymentDto, user: AuthUser) {
     const donation = await this.prisma.donation.findUnique({
       where: { id },
       include: { payment: true },
@@ -380,6 +526,12 @@ export class DonationsService {
     if (!donation) throw new NotFoundException('Donación no encontrada');
     if (!donation.payment) {
       throw new NotFoundException('La donación no tiene un pago asociado');
+    }
+    if (donation.type !== DonationType.MONEY) {
+      throw new BadRequestException('Solo se acreditan donaciones en dinero');
+    }
+    if (donation.payment.status === PaymentStatus.PAID) {
+      throw new BadRequestException('Esta donación ya fue acreditada');
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -412,7 +564,13 @@ export class DonationsService {
       });
     });
 
-    await this.audit.log(user?.id ?? null, 'confirm-payment', 'Donation', id, {
+    // Crowdfunding: recién acreditado el pago, el aporte suma al recaudado
+    // público de la campaña (antes de esto era una promesa sin verificar).
+    if (donation.campaignId) {
+      await this.applyCampaignContribution(donation.campaignId, donation.amount ?? 0);
+    }
+
+    await this.audit.log(user.id, 'confirm-payment', 'Donation', id, {
       reference: dto.reference,
     });
 

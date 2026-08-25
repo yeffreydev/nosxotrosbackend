@@ -66,14 +66,20 @@ export class CampaignsService {
         coverPhoto: dto.coverPhoto,
         goalAmount: dto.goalAmount ?? null,
         volunteerSkills: dto.volunteerSkills ?? [],
+        volunteerGoal: dto.volunteerGoal ?? null,
         deadline: dto.deadline ? new Date(dto.deadline) : null,
         lat: dto.lat,
         lng: dto.lng,
+        mapUrl: dto.mapUrl,
+        address: dto.address,
+        region: dto.region,
+        province: dto.province,
         district: dto.district,
         yapeNumber: dto.yapeNumber,
         yapePhone: dto.yapePhone,
         bankName: dto.bankName,
         bankAccount: dto.bankAccount,
+        cci: dto.cci,
         accountHolder: dto.accountHolder,
         qrImageUrl: dto.qrImageUrl,
         emergencyId: dto.emergencyId,
@@ -81,12 +87,73 @@ export class CampaignsService {
       },
     });
 
+    await this.ensurePrimaryZone(campaign);
+
     await this.audit.log(user.id, 'create', 'Campaign', campaign.id, {
       slug,
       goalAmount: campaign.goalAmount,
     });
 
     return this.shape(campaign);
+  }
+
+  /**
+   * La ubicación declarada al crear la campaña se convierte en su zona
+   * principal. Así el organizador entra a Zonas y ya tiene dónde despachar,
+   * poner necesidades y armar brigadas, sin tener que recrear a mano el lugar
+   * que acaba de escribir.
+   *
+   * Solo hay una zona principal: si ya existe, se actualiza en vez de duplicar.
+   */
+  private async ensurePrimaryZone(campaign: {
+    id: string;
+    title: string;
+    district: string | null;
+    address: string | null;
+    mapUrl: string | null;
+    lat: number | null;
+    lng: number | null;
+    emergencyId: string | null;
+  }) {
+    const hasLocation =
+      campaign.lat != null ||
+      campaign.lng != null ||
+      !!campaign.district ||
+      !!campaign.address ||
+      !!campaign.mapUrl;
+    if (!hasLocation) return null;
+
+    const name = campaign.district
+      ? `Zona ${campaign.district}`
+      : 'Zona principal';
+    const data = {
+      name,
+      mapUrl: campaign.mapUrl,
+      reference: campaign.address,
+      description: `Ubicación principal de la campaña "${campaign.title}".`,
+      lat: campaign.lat,
+      lng: campaign.lng,
+      emergencyId: campaign.emergencyId,
+    };
+
+    const existing = await this.prisma.zone.findFirst({
+      where: { campaignId: campaign.id, isPrimary: true },
+    });
+    if (existing) {
+      return this.prisma.zone.update({
+        where: { id: existing.id },
+        data: {
+          // El nombre no se pisa: el organizador pudo renombrarla.
+          mapUrl: data.mapUrl ?? existing.mapUrl,
+          reference: data.reference ?? existing.reference,
+          lat: data.lat ?? existing.lat,
+          lng: data.lng ?? existing.lng,
+        },
+      });
+    }
+    return this.prisma.zone.create({
+      data: { ...data, campaignId: campaign.id, isPrimary: true },
+    });
   }
 
   // ───────── lists ─────────
@@ -272,18 +339,36 @@ export class CampaignsService {
       ...(dto.deadline !== undefined
         ? { deadline: dto.deadline ? new Date(dto.deadline) : null }
         : {}),
+      ...(dto.volunteerGoal !== undefined
+        ? { volunteerGoal: dto.volunteerGoal ?? null }
+        : {}),
       ...(dto.lat !== undefined ? { lat: dto.lat } : {}),
       ...(dto.lng !== undefined ? { lng: dto.lng } : {}),
+      ...(dto.mapUrl !== undefined ? { mapUrl: dto.mapUrl } : {}),
+      ...(dto.address !== undefined ? { address: dto.address } : {}),
+      ...(dto.region !== undefined ? { region: dto.region } : {}),
+      ...(dto.province !== undefined ? { province: dto.province } : {}),
       ...(dto.district !== undefined ? { district: dto.district } : {}),
       ...(dto.yapeNumber !== undefined ? { yapeNumber: dto.yapeNumber } : {}),
       ...(dto.yapePhone !== undefined ? { yapePhone: dto.yapePhone } : {}),
       ...(dto.bankName !== undefined ? { bankName: dto.bankName } : {}),
       ...(dto.bankAccount !== undefined ? { bankAccount: dto.bankAccount } : {}),
+      ...(dto.cci !== undefined ? { cci: dto.cci } : {}),
       ...(dto.accountHolder !== undefined ? { accountHolder: dto.accountHolder } : {}),
       ...(dto.qrImageUrl !== undefined ? { qrImageUrl: dto.qrImageUrl } : {}),
     };
 
     const updated = await this.prisma.campaign.update({ where: { id }, data });
+    // Si cambió la ubicación, la zona principal se mantiene al día.
+    if (
+      dto.lat !== undefined ||
+      dto.lng !== undefined ||
+      dto.mapUrl !== undefined ||
+      dto.address !== undefined ||
+      dto.district !== undefined
+    ) {
+      await this.ensurePrimaryZone(updated);
+    }
     await this.audit.log(user.id, 'update', 'Campaign', id, { ...dto });
     return this.shape(updated);
   }

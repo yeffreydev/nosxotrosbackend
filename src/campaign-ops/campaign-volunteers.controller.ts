@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -50,6 +51,17 @@ export class CampaignVolunteersController {
   @Get('campaigns/:campaignId/volunteers')
   list(@Param('campaignId') campaignId: string, @CurrentUser() user: AuthUser) {
     return this.volunteers.list(campaignId, user);
+  }
+
+  /** Con qué voluntarios se cuenta un día concreto (por defecto, hoy). */
+  @Roles(Role.MANAGER, Role.ADMIN)
+  @Get('campaigns/:campaignId/volunteers/availability')
+  availability(
+    @Param('campaignId') campaignId: string,
+    @CurrentUser() user: AuthUser,
+    @Query('date') date?: string,
+  ) {
+    return this.volunteers.availability(campaignId, user, date);
   }
 
   @Roles(Role.MANAGER, Role.ADMIN)

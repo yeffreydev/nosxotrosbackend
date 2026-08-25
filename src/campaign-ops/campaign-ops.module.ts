@@ -6,6 +6,8 @@ import { BrigadesService } from './brigades.service';
 import { BrigadesController } from './brigades.controller';
 import { CampaignVolunteersService } from './campaign-volunteers.service';
 import { CampaignVolunteersController } from './campaign-volunteers.controller';
+import { NeedsService } from './needs.service';
+import { NeedsController } from './needs.controller';
 
 @Module({
   imports: [CampaignsModule],
@@ -13,7 +15,13 @@ import { CampaignVolunteersController } from './campaign-volunteers.controller';
     ZonesController,
     BrigadesController,
     CampaignVolunteersController,
+    NeedsController,
   ],
-  providers: [ZonesService, BrigadesService, CampaignVolunteersService],
+  providers: [
+    ZonesService,
+    BrigadesService,
+    CampaignVolunteersService,
+    NeedsService,
+  ],
 })
 export class CampaignOpsModule {}

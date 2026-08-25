@@ -55,6 +55,18 @@ export class CreateCenterDto {
   @MaxLength(500)
   mapUrl?: string;
 
+  // Foto del local: el donante reconoce a dónde llegar.
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  photoUrl?: string;
+
+  // Referencia / hito para ubicarlo ("frente al mercado central").
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reference?: string;
+
   @IsOptional()
   @IsString()
   organizationId?: string;

@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
+import { normalizeKey, normalizeUnit } from '../common/text.util';
 import { CampaignsService } from '../campaigns/campaigns.service';
 import { CreateCampaignDto } from '../campaigns/dto/create-campaign.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
@@ -232,13 +233,16 @@ export class EmergenciesService {
     });
     if (!emergency) throw new NotFoundException('Emergencia no encontrada');
 
+    const title = dto.title.trim();
     const need = await this.prisma.need.create({
       data: {
         emergencyId,
-        title: dto.title,
+        title,
+        // Clave normalizada: enlaza la necesidad con lo que entra al inventario.
+        titleKey: normalizeKey(title),
         categoryId: dto.categoryId,
         targetQty: dto.targetQty,
-        unit: dto.unit,
+        unit: normalizeUnit(dto.unit),
         priority: dto.priority,
         isBlocked: dto.isBlocked ?? false,
       },
@@ -254,7 +258,11 @@ export class EmergenciesService {
 
     const need = await this.prisma.need.update({
       where: { id },
-      data: { ...dto },
+      data: {
+        ...dto,
+        ...(dto.title ? { titleKey: normalizeKey(dto.title) } : {}),
+        ...(dto.unit ? { unit: normalizeUnit(dto.unit) } : {}),
+      },
       include: { category: true },
     });
     await this.audit.log(userId, 'update', 'Need', id, { ...dto });

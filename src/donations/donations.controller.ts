@@ -71,12 +71,17 @@ export class DonationsController {
     return this.donationsService.updateStatus(id, dto, user);
   }
 
-  @Public()
+  // Acreditar: solo un manager/admin, tras cotejar la transferencia contra el
+  // estado de cuenta, marca el pago como recibido. Antes era @Public() y
+  // cualquiera (incluido el propio formulario del donante) podía "confirmarse"
+  // su propio pago sin que nadie lo revisara.
+  @ApiBearerAuth()
+  @Roles(Role.MANAGER, Role.ADMIN)
   @Post(':id/confirm-payment')
   confirmPayment(
     @Param('id') id: string,
     @Body() dto: ConfirmPaymentDto,
-    @CurrentUser() user?: AuthUser,
+    @CurrentUser() user: AuthUser,
   ) {
     return this.donationsService.confirmPayment(id, dto, user);
   }

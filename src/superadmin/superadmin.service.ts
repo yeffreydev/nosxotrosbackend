@@ -8,10 +8,12 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { CampaignStatus, Role } from '@prisma/client';
+import { CampaignStatus, DonationType, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
+import { DonationsService } from '../donations/donations.service';
+import { AuthUser } from '../common/decorators/current-user.decorator';
 import { SuperadminLoginDto } from './dto/superadmin-login.dto';
 
 @Injectable()
@@ -23,6 +25,7 @@ export class SuperadminService implements OnModuleInit {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
+    private readonly donations: DonationsService,
   ) {}
 
   async onModuleInit() {
@@ -232,6 +235,68 @@ export class SuperadminService implements OnModuleInit {
       donationsCount: c._count.donations,
       zonesCount: c._count.zones,
     }));
+  }
+
+  /**
+   * Todos los pagos en dinero que llegan a la plataforma, para verificarlos
+   * desde el panel: PENDING = por cotejar contra el estado de cuenta,
+   * PAID = ya acreditado. Incluye la prueba que dejó el donante (nro. de
+   * operación y/o captura del voucher).
+   */
+  async listPayments() {
+    const donations = await this.prisma.donation.findMany({
+      where: { type: DonationType.MONEY, payment: { isNot: null } },
+      include: {
+        payment: true,
+        campaign: { select: { id: true, slug: true, title: true } },
+        donor: { select: { id: true, fullName: true, email: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 300,
+    });
+    return donations.map((d) => ({
+      id: d.id,
+      code: d.code,
+      amount: d.amount,
+      currency: d.currency,
+      createdAt: d.createdAt,
+      anonymous: d.anonymous,
+      donorName: d.anonymous ? null : (d.donor?.fullName ?? d.donorName ?? null),
+      donorEmail: d.anonymous ? null : (d.donor?.email ?? d.donorEmail ?? null),
+      campaign: d.campaign,
+      payment: d.payment && {
+        status: d.payment.status,
+        method: d.payment.method,
+        payerAccountNumber: d.payment.payerAccountNumber,
+        operationNumber: d.payment.operationNumber,
+        receiptUrl: d.payment.receiptUrl,
+        reference: d.payment.reference,
+        paidAt: d.payment.paidAt,
+      },
+    }));
+  }
+
+  /**
+   * Acredita un pago desde el panel superadmin. Reutiliza el flujo real de
+   * acreditación (evento de trazabilidad + recaudado de la campaña) firmando
+   * con el usuario ADMIN materializado por ensureSuperadmin.
+   */
+  async confirmPayment(donationId: string, reference?: string) {
+    const email = this.config
+      .get<string>('SUPERADMIN_USER')
+      ?.trim()
+      .toLowerCase();
+    const admin = email
+      ? await this.prisma.user.findUnique({ where: { email } })
+      : await this.prisma.user.findFirst({ where: { role: Role.ADMIN } });
+    if (!admin) {
+      throw new UnauthorizedException('No hay usuario superadmin materializado');
+    }
+    return this.donations.confirmPayment(
+      donationId,
+      { reference },
+      admin as unknown as AuthUser,
+    );
   }
 
   /** Elimina una campaña, desligando donaciones y centros (zonas/brigadas/updates caen en cascada). */

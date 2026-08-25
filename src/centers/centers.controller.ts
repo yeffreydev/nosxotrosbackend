@@ -14,6 +14,7 @@ import { CreateCenterDto } from './dto/create-center.dto';
 import { UpdateCenterDto } from './dto/update-center.dto';
 import { QueryCentersDto } from './dto/query-centers.dto';
 import { CreateItemDto } from './dto/create-item.dto';
+import { UpdateItemDto } from './dto/update-item.dto';
 import { DispatchItemDto } from './dto/dispatch-item.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -72,6 +73,24 @@ export class CentersController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.centersService.createItem(id, dto, user.id);
+  }
+
+  @ApiBearerAuth()
+  @Roles(Role.MANAGER, Role.REGISTRAR)
+  @Patch(':id/inventory/:itemId')
+  updateItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: UpdateItemDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.centersService.updateItem(id, itemId, dto, user.id);
+  }
+
+  @ApiBearerAuth()
+  @Get(':id/movements')
+  getMovements(@Param('id') id: string, @Query('limit') limit?: string) {
+    return this.centersService.getMovements(id, Number(limit) || 100);
   }
 
   @ApiBearerAuth()

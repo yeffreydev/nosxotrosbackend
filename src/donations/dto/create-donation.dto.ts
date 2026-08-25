@@ -10,6 +10,7 @@ import {
   IsPositive,
   IsString,
   Matches,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { DonationType, PaymentMethod, VolunteerSkill } from '@prisma/client';
@@ -67,6 +68,24 @@ export class CreateDonationDto {
   @IsOptional()
   @IsEnum(PaymentMethod)
   paymentMethod?: PaymentMethod;
+
+  // Cuenta/nro. desde la que el donante dice haber transferido (MONEY). Es lo
+  // que el administrador coteja contra el estado de cuenta para acreditar.
+  @IsOptional()
+  @IsString()
+  donorAccountNumber?: string;
+
+  // Prueba del abono: nro. de operación que devuelve Yape/Plin/banco…
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  operationNumber?: string;
+
+  // …o la captura del voucher subida a /uploads/receipt.
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  receiptUrl?: string;
 
   @IsOptional()
   @IsBoolean()

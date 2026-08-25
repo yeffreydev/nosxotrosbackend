@@ -6,6 +6,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
+import { calendarWeekday } from '../common/date.util';
+import { VolunteerAvailabilityService } from '../common/volunteer-availability.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { CampaignsService } from '../campaigns/campaigns.service';
 import {
@@ -27,6 +29,7 @@ export class CampaignVolunteersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly campaigns: CampaignsService,
+    private readonly availabilityService: VolunteerAvailabilityService,
   ) {}
 
   /** Voluntarios inscritos + la brigada de la campaña a la que pertenecen (si alguna). */
@@ -158,6 +161,58 @@ export class CampaignVolunteersService {
     });
     if (!enrollment) throw new NotFoundException('Inscripción no encontrada');
     return this.deleteEnrollmentById(enrollment.id, enrollment.volunteerId, campaignId, user.id);
+  }
+
+  /**
+   * "¿Con qué voluntarios cuento hoy?".
+   *
+   * Cruza los inscritos en la campaña con su disponibilidad declarada para un
+   * día: horarios puntuales de esa fecha y horarios recurrentes que caen en ese
+   * día de la semana. Devuelve disponibles y no disponibles por separado, ya
+   * ordenados, para pintarlo sin más cálculo.
+   */
+  async availability(campaignId: string, user: AuthUser, dateISO?: string) {
+    await this.campaigns.assertCanManage(campaignId, user);
+
+    const day = this.availabilityService.resolveDay(dateISO);
+    const enrollments = await this.prisma.campaignVolunteer.findMany({
+      where: { campaignId },
+      include: ENROLLMENT_INCLUDE,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const volunteerIds = enrollments
+      .map((e) => e.volunteerId)
+      .filter((id): id is string => !!id);
+    const slotsByVolunteer = await this.availabilityService.slotsByVolunteer(
+      volunteerIds,
+      day,
+    );
+
+    const rows = enrollments.map((e) => {
+      const account = e.volunteer?.user ?? null;
+      const slots = e.volunteerId ? slotsByVolunteer.get(e.volunteerId) ?? [] : [];
+      return {
+        id: e.id,
+        volunteerId: e.volunteerId,
+        fullName: account?.fullName ?? e.guestName ?? 'Voluntario',
+        phone: account?.phone ?? e.guestPhone ?? null,
+        email: account?.email ?? e.guestEmail ?? null,
+        isGuest: !account,
+        skills: e.skills,
+        available: slots.length > 0,
+        slots,
+      };
+    });
+
+    const available = rows.filter((r) => r.available);
+    return {
+      date: day.toISOString().slice(0, 10),
+      weekday: calendarWeekday(day),
+      total: rows.length,
+      availableCount: available.length,
+      volunteers: [...available, ...rows.filter((r) => !r.available)],
+    };
   }
 
   private async createEnrollment(

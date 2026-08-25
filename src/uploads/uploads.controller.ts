@@ -6,6 +6,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Public } from '../common/decorators/public.decorator';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import {
   imageMulterOptions,
@@ -31,6 +32,26 @@ export class UploadsController {
   })
   @UseInterceptors(FileInterceptor('file', imageMulterOptions))
   uploadImage(@UploadedFile() file?: UploadedImage) {
+    return this.shape(file);
+  }
+
+  // Comprobante de una donación: lo sube el donante desde la web pública, que
+  // por diseño no tiene cuenta. Mismos límites que el resto (imagen, 5 MB).
+  @Public()
+  @Post('receipt')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @UseInterceptors(FileInterceptor('file', imageMulterOptions))
+  uploadReceipt(@UploadedFile() file?: UploadedImage) {
+    return this.shape(file);
+  }
+
+  private shape(file?: UploadedImage) {
     if (!file) throw new BadRequestException('No se recibió ninguna imagen (campo "file").');
     return {
       filename: file.filename,
