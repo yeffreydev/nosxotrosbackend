@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { NeedsProgressService } from '../common/needs-progress.service';
@@ -53,15 +54,22 @@ export class ZonesService {
   }
 
   /** Panel de operaciones del organizador: campaña + zonas + brigadas + centros. */
-  async operations(idOrSlug: string) {
+  async operations(idOrSlug: string, viewer?: { role?: Role }) {
     const campaign = await this.prisma.campaign.findFirst({
       where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
       include: {
-        centers: true,
+        centers: { orderBy: [{ isCentral: 'desc' }, { name: 'asc' }] },
         organizer: { select: { id: true, fullName: true } },
       },
     });
     if (!campaign) throw new NotFoundException('Campaña no encontrada');
+
+    // El almacén central que no acopia es bodega interna: el público no lo ve.
+    const staffRoles: Role[] = [Role.ADMIN, Role.MANAGER, Role.REGISTRAR];
+    const staff = !!viewer?.role && staffRoles.includes(viewer.role);
+    const centers = staff
+      ? campaign.centers
+      : campaign.centers.filter((c) => !c.isCentral || c.acceptsDonations);
 
     const zones = await this.listByCampaign(campaign.id);
     return {
@@ -73,7 +81,7 @@ export class ZonesService {
         organizer: campaign.organizer,
       },
       zones,
-      centers: campaign.centers,
+      centers,
     };
   }
 

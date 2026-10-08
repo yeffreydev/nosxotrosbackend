@@ -74,6 +74,22 @@ export class DonationsService {
     if (dto.type === DonationType.GOODS && isMedicineText(dto.description)) {
       throw new BadRequestException(NO_MEDICINE_MSG);
     }
+    // El centro elegido tiene que acopiar: el almacén central interno (bodega
+    // que no recibe donaciones) no es destino válido para un donante.
+    if (dto.type === DonationType.GOODS && dto.centerId?.trim()) {
+      const center = await this.prisma.center.findUnique({
+        where: { id: dto.centerId.trim() },
+        select: { isCentral: true, acceptsDonations: true },
+      });
+      if (!center) {
+        throw new BadRequestException('Centro de acopio no encontrado');
+      }
+      if (center.isCentral && !center.acceptsDonations) {
+        throw new BadRequestException(
+          'Ese almacén no recibe donaciones directas: elige un centro de acopio',
+        );
+      }
+    }
     // Dinero (MONEY): la cuenta de origen es lo único que le permite al
     // administrador cotejar la transferencia contra el estado de cuenta real
     // antes de acreditarla.

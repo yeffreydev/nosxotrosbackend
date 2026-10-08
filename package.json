@@ -14,7 +14,8 @@
     "prisma:push": "prisma db push",
     "seed": "ts-node prisma/seed.ts",
     "db:reset": "prisma migrate reset --force",
-    "test": "jest"
+    "test": "jest",
+    "seed:base": "ts-node prisma/seed-base.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.4",

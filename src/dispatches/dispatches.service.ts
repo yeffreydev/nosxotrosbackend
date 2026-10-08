@@ -32,6 +32,20 @@ export class DispatchesService {
     });
     if (!center) throw new NotFoundException('Centro de origen no encontrado');
 
+    // Si la campaña tiene almacén central, las entregas salen solo de él: los
+    // centros de acopio transfieren primero su stock al central.
+    if (!center.isCentral && center.campaignId) {
+      const central = await this.prisma.center.findFirst({
+        where: { campaignId: center.campaignId, isCentral: true },
+        select: { name: true },
+      });
+      if (central) {
+        throw new BadRequestException(
+          `Esta campaña despacha desde su almacén central ("${central.name}"). Transfiere el stock al central y despacha desde ahí.`,
+        );
+      }
+    }
+
     // Zona de atención: es el destino. Si se elige, de ella salen la dirección y
     // el pin cuando no se escriben a mano, y tiene que ser de la misma campaña
     // que el centro de origen para no mandar ayuda a otra operación.

@@ -28,10 +28,12 @@ export class ZonesController {
     return this.zones.listByCampaign(campaignId);
   }
 
+  // Auth opcional: el personal ve también el almacén central interno de la
+  // campaña; el público solo los centros de acopio.
   @Public()
   @Get('campaigns/:idOrSlug/operations')
-  operations(@Param('idOrSlug') idOrSlug: string) {
-    return this.zones.operations(idOrSlug);
+  operations(@Param('idOrSlug') idOrSlug: string, @CurrentUser() user?: AuthUser) {
+    return this.zones.operations(idOrSlug, user);
   }
 
   @ApiBearerAuth()

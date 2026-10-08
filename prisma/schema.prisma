@@ -84,6 +84,8 @@ enum InventoryMovementType {
   IN // entrada
   OUT // salida / despacho
   ADJUST // ajuste de inventario
+  TRANSFER_IN // llegada de una transferencia entre centros (no cuenta como recolectado)
+  TRANSFER_OUT // salida hacia otro centro (no cuenta como entregado)
 }
 
 enum ShiftStatus {
@@ -195,6 +197,7 @@ model User {
   notifications    Notification[]
   beneficiariesReg Beneficiary[]      @relation("RegisteredBy")
   inventoryMoves   InventoryMovement[]
+  transfers        Transfer[]
   auditLogs        AuditLog[]
   surveyResponses  SurveyResponse[]
   brigadeMemberships BrigadeMember[]
@@ -359,6 +362,12 @@ model Center {
   status        CenterStatus @default(OPEN)
   capacity      Int          @default(1000) // unidades / aforo de bodega
   currentLoad   Int          @default(0)
+  // Almacén central de la campaña: los centros de acopio le transfieren lo
+  // recaudado y solo desde él salen los despachos a beneficiarios.
+  isCentral     Boolean      @default(false)
+  // Un central puede además acopiar (recibe donaciones y aparece en público).
+  // Si no acopia, es solo bodega interna: no se muestra a donantes.
+  acceptsDonations Boolean   @default(true)
   contactPhone  String?
   openingHours  String? // horario libre, ej. "Lun-Vie 8:00-18:00"
   mapUrl        String? // enlace externo del mapa (Google Maps / Waze) para abrir la ruta
@@ -375,6 +384,8 @@ model Center {
   movements   InventoryMovement[]
   shifts      Shift[]
   dispatchesFrom Dispatch[]   @relation("DispatchFrom")
+  transfersOut Transfer[]     @relation("TransferFrom")
+  transfersIn  Transfer[]     @relation("TransferTo")
   primaryForEmergencies Emergency[] @relation("PrimaryCenter")
 }
 
@@ -425,7 +436,40 @@ model InventoryMovement {
   user      User?                 @relation(fields: [userId], references: [id])
   donationId String?
   donation  Donation?             @relation(fields: [donationId], references: [id])
+  transferId String?
+  transfer  Transfer?             @relation(fields: [transferId], references: [id])
   createdAt DateTime              @default(now())
+}
+
+// Transferencia de stock entre centros: el centro de acopio entrega lo recaudado
+// al almacén central. Sale de uno (TRANSFER_OUT) y entra al otro (TRANSFER_IN)
+// en la misma operación; no altera metas (no es recolección ni entrega).
+model Transfer {
+  id           String   @id @default(cuid())
+  code         String   @unique @default(cuid())
+  fromCenterId String
+  fromCenter   Center   @relation("TransferFrom", fields: [fromCenterId], references: [id])
+  toCenterId   String
+  toCenter     Center   @relation("TransferTo", fields: [toCenterId], references: [id])
+  note         String?
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  createdAt    DateTime @default(now())
+
+  items     TransferItem[]
+  movements InventoryMovement[]
+
+  @@index([fromCenterId])
+  @@index([toCenterId])
+}
+
+model TransferItem {
+  id         String   @id @default(cuid())
+  transferId String
+  transfer   Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  name       String
+  quantity   Int
+  unit       String   @default("unidad")
 }
 
 // ───────────────────────────── Donaciones ─────────────────────────────

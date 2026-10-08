@@ -1,5 +1,7 @@
 import {
+  IsBoolean,
   IsDateString,
+  IsEmail,
   IsInt,
   IsOptional,
   IsString,
@@ -46,4 +48,29 @@ export class CreateItemDto {
   @IsOptional()
   @IsString()
   donationId?: string; // entrada trazable a una donación
+
+  // ── Donante que entrega en mano ─────────────────────────────────────────
+  // Si el ingreso es una donación presencial, se registra quién la trajo y se
+  // crea una Donation GOODS ya RECIBIDA (con código público rastreable) para
+  // poder emitirle un comprobante. `donorAnonymous: true` registra la donación
+  // sin datos personales; con datos, el nombre es obligatorio. Sin ninguno de
+  // estos campos el ingreso es un alta de stock normal, como hasta ahora.
+  @IsOptional()
+  @IsBoolean()
+  donorAnonymous?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  donorName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  donorPhone?: string;
+
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(120)
+  donorEmail?: string;
 }

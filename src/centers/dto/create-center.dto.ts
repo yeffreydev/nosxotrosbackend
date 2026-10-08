@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNumber,
@@ -74,4 +75,16 @@ export class CreateCenterDto {
   @IsOptional()
   @IsString()
   campaignId?: string;
+
+  // Almacén central de la campaña: recibe las transferencias de los centros de
+  // acopio y es el único que despacha a beneficiarios. Máximo uno por campaña.
+  @IsOptional()
+  @IsBoolean()
+  isCentral?: boolean;
+
+  // Si el central también acopia, se comporta como centro de acopio (recibe
+  // donaciones y aparece en público). Si no, es bodega interna: no se publica.
+  @IsOptional()
+  @IsBoolean()
+  acceptsDonations?: boolean;
 }
