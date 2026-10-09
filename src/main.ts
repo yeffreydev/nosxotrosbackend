@@ -38,8 +38,9 @@ async function bootstrap() {
       ? true
       : (origin, cb) => {
           // Sin origen (curl, apps móviles, same-origin) o en la lista → permitir.
-          if (!origin || allowed.includes(origin)) cb(null, true);
-          else cb(new Error(`Origen no permitido por CORS: ${origin}`), false);
+          // Origen no listado: sin cabeceras CORS (el navegador lo bloquea) en
+          // vez de lanzar un error que Express convierte en 500.
+          cb(null, !origin || allowed.includes(origin));
         },
     credentials: true,
   });
@@ -54,7 +55,8 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  // En el VPS: HOST=127.0.0.1 → solo nginx llega a Node; el puerto no queda expuesto.
+  await app.listen(port, process.env.HOST || '0.0.0.0');
 }
 
 bootstrap();
